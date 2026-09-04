@@ -211,10 +211,7 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
     // copy of `it` placed at (x, y); a copied frame gets fresh timestamps
     function duplicateItem(it: Item, x: number, y: number) {
         const { id: _id, ...rest } = it
-        if (isFrame(it)) {
-            const now = Date.now()
-            return addFrame({ ...(rest as FrameItem), x, y, createdAt: now, updatedAt: now })
-        }
+        if (isFrame(it)) return addFrame({ ...(rest as FrameItem), x, y }) // a copy keeps its timestamps
         return addItem({ ...(rest as TextItem), x, y })
     }
 
@@ -270,7 +267,65 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
         world.style.transform = `translate(${view.x}px, ${view.y}px) scale(${view.z})`
         world.style.setProperty("--inv", String(1 / view.z))
         if (zoomVal) zoomVal.textContent = Math.round(view.z * 100) + "%"
+        updateMinimap()
     }
+
+    /* ---- minimap: fades in above the zoom pill once nothing is on screen.
+       Frames are dots, the viewport is a rectangle; click to jump there. ---- */
+    const minimap = root.querySelector<HTMLElement>("#minimap")
+    const MM_W = 140,
+        MM_H = 90,
+        MM_PAD = 10
+    let mmScale = 1,
+        mmOx = 0,
+        mmOy = 0 // world → minimap: (x - mmOx) * mmScale
+    function intersects(a, b) {
+        return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y
+    }
+    function updateMinimap() {
+        if (!minimap) return
+        const vp = viewportWorldRect()
+        const anyVisible = items.some((it) => {
+            const { w, h } = nodeSize(it)
+            return intersects({ x: it.x, y: it.y, w, h }, vp)
+        })
+        const show = items.length > 0 && !anyVisible
+        minimap.classList.toggle("on", show)
+        if (!show) return
+        // fit everything plus the viewport
+        const all = boundsOf(items)
+        const x1 = Math.min(all.x, vp.x),
+            y1 = Math.min(all.y, vp.y)
+        const x2 = Math.max(all.x + all.w, vp.x + vp.w),
+            y2 = Math.max(all.y + all.h, vp.y + vp.h)
+        mmScale = Math.min((MM_W - MM_PAD * 2) / (x2 - x1), (MM_H - MM_PAD * 2) / (y2 - y1))
+        mmOx = x1 - (MM_W / mmScale - (x2 - x1)) / 2
+        mmOy = y1 - (MM_H / mmScale - (y2 - y1)) / 2
+        minimap.innerHTML = ""
+        items.filter(isFrame).forEach((f) => {
+            const d = document.createElement("i")
+            d.className = "mm-dot"
+            d.style.left = (f.x + f.w / 2 - mmOx) * mmScale + "px"
+            d.style.top = (f.y + f.h / 2 - mmOy) * mmScale + "px"
+            minimap.appendChild(d)
+        })
+        const v = document.createElement("div")
+        v.className = "mm-view"
+        v.style.left = (vp.x - mmOx) * mmScale + "px"
+        v.style.top = (vp.y - mmOy) * mmScale + "px"
+        v.style.width = vp.w * mmScale + "px"
+        v.style.height = vp.h * mmScale + "px"
+        minimap.appendChild(v)
+    }
+    minimap?.addEventListener("click", (e: MouseEvent) => {
+        const r = minimap.getBoundingClientRect()
+        const wx = (e.clientX - r.left) / mmScale + mmOx
+        const wy = (e.clientY - r.top) / mmScale + mmOy
+        // center the viewport on the clicked world point
+        view.x = canvas.clientWidth / 2 - wx * view.z
+        view.y = canvas.clientHeight / 2 - wy * view.z
+        applyView()
+    })
     function toWorld(clientX: number, clientY: number) {
         const r = canvas.getBoundingClientRect()
         return {
@@ -465,6 +520,7 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
         })
         applyWash()
         renderSelectionOverlay()
+        updateMinimap()
     }
 
     function renderFrame(it: FrameItem) {
@@ -1732,15 +1788,30 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
     }
 
     function buildPanel() {
-        const fontDD = makeSelect([
-            "Inter",
-            "Helvetica Neue",
-            "SF Pro",
-            "Roboto",
-            "Georgia",
-            "IBM Plex Sans",
-        ])
-        fontDD.querySelector<HTMLSelectElement>("select").disabled = true
+        const fontDD = makeSelect(
+            ["Inter", "PP Mondwest", "PP NeueBit", "Helvetica Neue", "Georgia"],
+            (font) => {
+                const sel = selectedTextItems()
+                if (!sel.length || sel.every((it) => it.font === font)) return
+                pushHistory()
+                sel.forEach((it) => (it.font = font))
+                emit()
+            }
+        )
+        const fontSel = fontDD.querySelector<HTMLSelectElement>("select")
+        const mixedOpt = document.createElement("option")
+        mixedOpt.value = "__mixed"
+        mixedOpt.textContent = "Mixed"
+        mixedOpt.disabled = true
+        mixedOpt.hidden = true
+        fontSel.appendChild(mixedOpt)
+        function updateFontDD() {
+            const sel = selectedTextItems()
+            fontSel.disabled = !sel.length
+            if (!sel.length) return
+            const same = sel.every((it) => it.font === sel[0].font)
+            fontSel.value = same ? sel[0].font : "__mixed"
+        }
 
         const row = document.createElement("div")
         row.className = "proprow"
@@ -1803,6 +1874,7 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
         }
 
         function updateField(force?: boolean) {
+            updateFontDD()
             const sel = selectedTextItems()
             if (sel.length === 0) {
                 input.value = ""

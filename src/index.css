@@ -7,3 +7,16 @@ body {
   font-family: 'Inter', system-ui, sans-serif;
   -webkit-font-smoothing: antialiased;
 }
+
+@font-face {
+  font-family: 'PP Mondwest';
+  src: url('/fonts/PPMondwest-Regular.otf') format('opentype');
+  font-weight: 100 900;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'PP NeueBit';
+  src: url('/fonts/PPNeueBit-Bold.otf') format('opentype');
+  font-weight: 100 900;
+  font-display: swap;
+}

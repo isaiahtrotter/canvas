@@ -36,6 +36,8 @@ reference/               Original Framer components this was ported from
 - Scroll / pinch to zoom (10%–400%), anchored under the cursor · ⌘/Ctrl `+` `−` `0` · zoom pill bottom-left
 - Hold Space and drag, or middle-mouse drag, to pan
 - `V` move tool · `F` frame tool · `Esc` back to move / clear selection
+- When nothing is on screen, a minimap fades in above the zoom pill: frames are dots, the
+  viewport is a rectangle; click it to jump
 
 **Frames**
 - With the frame tool, drag to draw a frame, or click to drop a 200×150 one
@@ -43,6 +45,7 @@ reference/               Original Framer components this was ported from
   hover the timestamp for the full date. `Shift+T` toggles timestamps (remembered)
 - Double-click the name to rename · drag corner handles to resize · W/H editable in the sidebar
 - Dragging a frame carries the text sitting inside it; deleting a frame leaves the text
+- Duplicating a frame keeps its timestamp; undoing an edit restores the pre-edit timestamp
 
 **Fill**
 - The Fill row in the sidebar shows the selection's color and alpha (or "Mixed"); click it
@@ -55,6 +58,8 @@ reference/               Original Framer components this was ported from
 - Double-click to edit text · Enter commits · Esc commits and deselects
 - Delete / Backspace removes selected layers
 - Cmd/Ctrl+Z undo · Shift+Cmd/Ctrl+Z redo (20 steps)
+- Font dropdown switches the selected text between Inter, PP Mondwest, PP NeueBit, Helvetica Neue, Georgia
+  (the PP faces are loaded from `public/fonts/`)
 - Sidebar: alignment (a single layer aligns within its frame), Versions 1–3 swap the
   font-size widget design, size field accepts typing / ↑↓ / the drawer's handles, pills, and ± steppers
 
