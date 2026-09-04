@@ -269,10 +269,6 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
         weight: 400,
     })
     addItem({ x: 60, y: 220, text: "to edit them", size: 14, weight: 400 })
-    selection.add(items[0].id)
-    selection.add(items[1].id)
-    selection.add(items[2].id)
-    selection.add(items[3].id)
 
     function selectedItems(): Item[] {
         return items.filter((it) => selection.has(it.id))
