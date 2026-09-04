@@ -24,22 +24,37 @@ src/
     engine.ts            The editor itself — vanilla DOM, mountEditor(root) → cleanup
     markup.ts            Static sidebar/canvas markup the engine renders into
     editor.css           All editor styling
+    time.ts              Relative/absolute time formatting for frame timestamps
 reference/               Original Framer components this was ported from
 ```
 
 ## Interactions
 
+**Canvas**
+- Scroll / pinch to zoom (10%–400%), anchored under the cursor · ⌘/Ctrl `+` `−` `0` · zoom pill bottom-left
+- Hold Space and drag, or middle-mouse drag, to pan
+- `V` move tool · `F` frame tool · `Esc` back to move / clear selection
+
+**Frames**
+- With the frame tool, drag to draw a frame, or click to drop a 200×150 one
+- Frames show their name and a "last edited" timestamp above the top-left corner;
+  hover the timestamp for the full date. `Shift+T` toggles timestamps (remembered)
+- Double-click the name to rename · drag corner handles to resize · W/H editable in the sidebar
+- Dragging a frame carries the text sitting inside it; deleting a frame leaves the text
+
+**Text**
 - Click / shift-click / marquee-drag to select layers; drag to move
 - Hold Option (Alt) while dragging to duplicate
 - Double-click to edit text · Enter commits · Esc commits and deselects
 - Delete / Backspace removes selected layers
 - Cmd/Ctrl+Z undo · Shift+Cmd/Ctrl+Z redo (20 steps)
-- Sidebar: alignment, Versions 1–3 swap the font-size widget design,
-  size field accepts typing / ↑↓ / the drawer's handles, pills, and ± steppers
+- Sidebar: alignment (a single layer aligns within its frame), Versions 1–3 swap the
+  font-size widget design, size field accepts typing / ↑↓ / the drawer's handles, pills, and ± steppers
 
 ## Adding an experiment
 
-Everything lives in `src/editor/engine.ts`. State is `items` + `selection`;
+Everything lives in `src/editor/engine.ts`. State is `items` (text layers and
+frames, discriminated by `kind`) + `selection`;
 call `emit()` after any change and every subscriber (canvas render, sidebar,
 widget) refreshes. Wrap a user-visible change in `pushHistory()` so it's
 undoable. To add a new widget design, add an entry to `VARIANTS` and a

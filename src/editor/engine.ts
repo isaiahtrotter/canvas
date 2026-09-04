@@ -2,8 +2,10 @@
 // mountEditor(root) renders the markup into `root`, wires every interaction,
 // and returns a cleanup that tears the whole thing down.
 import { MARKUP } from "./markup"
+import { absTime, relTime } from "./time"
 
 interface TextItem {
+    kind: "text"
     id: number
     x: number
     y: number
@@ -13,6 +15,22 @@ interface TextItem {
     weight: number
     opacity?: number
 }
+
+export interface FrameItem {
+    kind: "frame"
+    id: number
+    x: number
+    y: number
+    w: number
+    h: number
+    name: string
+    createdAt: number
+    updatedAt: number
+}
+
+type Item = TextItem | FrameItem
+const isFrame = (it: Item): it is FrameItem => it.kind === "frame"
+const isText = (it: Item): it is TextItem => it.kind === "text"
 
 export function mountEditor(root: HTMLElement): () => void {
     root.innerHTML = MARKUP
@@ -66,7 +84,7 @@ export function mountEditor(root: HTMLElement): () => void {
 
     /* ================= app state ================= */
     let nextId = 1
-    const items: TextItem[] = []
+    const items: Item[] = []
     const selection = new Set<number>()
     const listeners = []
     function subscribe(fn) {
@@ -121,9 +139,10 @@ export function mountEditor(root: HTMLElement): () => void {
         }
     })
 
-    function addItem(props: Partial<TextItem>) {
-        const it = Object.assign(
+    function addItem(props: Partial<TextItem>): TextItem {
+        const it: TextItem = Object.assign(
             {
+                kind: "text" as const,
                 id: nextId++,
                 x: 60,
                 y: 60,
@@ -137,6 +156,38 @@ export function mountEditor(root: HTMLElement): () => void {
         )
         items.push(it)
         return it
+    }
+
+    let frameCount = 0
+    function addFrame(props: Partial<FrameItem>): FrameItem {
+        const now = Date.now()
+        frameCount++
+        const f: FrameItem = Object.assign(
+            {
+                kind: "frame" as const,
+                id: nextId++,
+                x: 0,
+                y: 0,
+                w: 200,
+                h: 150,
+                name: "Frame " + frameCount,
+                createdAt: now,
+                updatedAt: now,
+            },
+            props
+        )
+        items.push(f)
+        return f
+    }
+
+    // copy of `it` placed at (x, y); a copied frame gets fresh timestamps
+    function duplicateItem(it: Item, x: number, y: number) {
+        const { id: _id, ...rest } = it
+        if (isFrame(it)) {
+            const now = Date.now()
+            return addFrame({ ...(rest as FrameItem), x, y, createdAt: now, updatedAt: now })
+        }
+        return addItem({ ...(rest as TextItem), x, y })
     }
 
     addItem({
@@ -160,19 +211,171 @@ export function mountEditor(root: HTMLElement): () => void {
     selection.add(items[2].id)
     selection.add(items[3].id)
 
-    function selectedItems() {
+    function selectedItems(): Item[] {
         return items.filter((it) => selection.has(it.id))
     }
+    // the text layers in the selection — what the Text panel and size widget bind to
+    function selectedTextItems(): TextItem[] {
+        return items.filter((it): it is TextItem => isText(it) && selection.has(it.id))
+    }
     function selColor(id) {
-        const sel = selectedItems()
+        const sel = selectedTextItems()
         const idx = sel.findIndex((it) => it.id === id)
         return PALETTE[idx % PALETTE.length]
     }
 
     /* ================= canvas ================= */
+    const app = root.querySelector<HTMLElement>(".app")
     const canvas = root.querySelector<HTMLElement>("#canvas")
+    const world = root.querySelector<HTMLElement>("#world")
     let editingEl = null
     let hoverWash = null // {id, color} — set while a slider handle is hovered/dragged
+
+    /* ---- view: pan + zoom. Items live in world coords; #world carries
+       translate(x,y) scale(z). --inv is 1/z so chrome that should stay a
+       constant size on screen (frame labels, handles) can counter-scale. ---- */
+    const ZOOM_MIN = 0.1,
+        ZOOM_MAX = 4
+    const view = { x: 0, y: 0, z: 1 }
+    const zoomVal = root.querySelector<HTMLElement>("#zoomVal")
+    function applyView() {
+        world.style.transform = `translate(${view.x}px, ${view.y}px) scale(${view.z})`
+        world.style.setProperty("--inv", String(1 / view.z))
+        if (zoomVal) zoomVal.textContent = Math.round(view.z * 100) + "%"
+    }
+    function toWorld(clientX: number, clientY: number) {
+        const r = canvas.getBoundingClientRect()
+        return {
+            x: (clientX - r.left - view.x) / view.z,
+            y: (clientY - r.top - view.y) / view.z,
+        }
+    }
+    // zoom so the world point under canvas-relative (cx, cy) stays put
+    function zoomAt(factor: number, cx: number, cy: number) {
+        const z = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, view.z * factor))
+        if (z === view.z) return
+        view.x = cx - (cx - view.x) * (z / view.z)
+        view.y = cy - (cy - view.y) * (z / view.z)
+        view.z = z
+        applyView()
+    }
+    function zoomCenter(factor: number) {
+        zoomAt(factor, canvas.clientWidth / 2, canvas.clientHeight / 2)
+    }
+    function resetView() {
+        view.x = 0
+        view.y = 0
+        view.z = 1
+        applyView()
+    }
+    // the visible part of the world, in world coords
+    function viewportWorldRect() {
+        return {
+            x: -view.x / view.z,
+            y: -view.y / view.z,
+            w: canvas.clientWidth / view.z,
+            h: canvas.clientHeight / view.z,
+        }
+    }
+    canvas.addEventListener(
+        "wheel",
+        (e: WheelEvent) => {
+            e.preventDefault()
+            const r = canvas.getBoundingClientRect()
+            // a pinch (ctrlKey) reports smaller deltas than a wheel notch
+            const factor = Math.exp(-e.deltaY * (e.ctrlKey ? 0.01 : 0.0015))
+            zoomAt(factor, e.clientX - r.left, e.clientY - r.top)
+        },
+        { passive: false }
+    )
+    root.querySelectorAll<HTMLElement>(".zoompill [data-z]").forEach((b) => {
+        b.addEventListener("click", () => {
+            if (b.dataset.z === "reset") resetView()
+            else zoomCenter(b.dataset.z === "+" ? 1.25 : 1 / 1.25)
+        })
+    })
+
+    /* ---- panning: hold Space and drag, or drag with the middle button ---- */
+    let spaceDown = false
+    function setSpaceDown(v: boolean) {
+        spaceDown = v
+        canvas.classList.toggle("pan-ready", v)
+    }
+    function startPan(e: PointerEvent) {
+        canvas.classList.add("panning")
+        let lx = e.clientX,
+            ly = e.clientY
+        function mv(ev: PointerEvent) {
+            view.x += ev.clientX - lx
+            view.y += ev.clientY - ly
+            lx = ev.clientX
+            ly = ev.clientY
+            applyView()
+        }
+        function up() {
+            canvas.classList.remove("panning")
+            document.removeEventListener("pointermove", mv)
+            document.removeEventListener("pointerup", up)
+        }
+        document.addEventListener("pointermove", mv)
+        document.addEventListener("pointerup", up)
+    }
+    const onWindowBlur = () => setSpaceDown(false)
+    window.addEventListener("blur", onWindowBlur)
+
+    /* ---- tools: V = move/select, F = draw a frame ---- */
+    type Tool = "move" | "frame"
+    let tool: Tool = "move"
+    function setTool(t: Tool) {
+        tool = t
+        canvas.classList.toggle("tool-frame", t === "frame")
+        root.querySelectorAll<HTMLElement>(".toolpill [data-tool]").forEach(
+            (b) => b.classList.toggle("active", b.dataset.tool === t)
+        )
+    }
+    root.querySelectorAll<HTMLElement>(".toolpill [data-tool]").forEach((b) =>
+        b.addEventListener("click", () => setTool(b.dataset.tool as Tool))
+    )
+
+    /* ---- toast ---- */
+    const toastEl = root.querySelector<HTMLElement>("#toast")
+    let toastTimer = null
+    function showToast(msg: string) {
+        toastEl.textContent = msg
+        toastEl.classList.add("show")
+        clearTimeout(toastTimer)
+        toastTimer = setTimeout(() => toastEl.classList.remove("show"), 1800)
+    }
+
+    /* ---- frame timestamps: shown beside the name; Shift+T toggles, and
+       the choice sticks in localStorage ---- */
+    const TIMES_KEY = "canvas.showTimestamps"
+    let showTimes = true
+    try {
+        showTimes = localStorage.getItem(TIMES_KEY) !== "0"
+    } catch (_) {
+        /* storage unavailable — default to shown */
+    }
+    function applyShowTimes() {
+        app.classList.toggle("hide-times", !showTimes)
+    }
+    function toggleTimes() {
+        showTimes = !showTimes
+        try {
+            localStorage.setItem(TIMES_KEY, showTimes ? "1" : "0")
+        } catch (_) {
+            /* ignore */
+        }
+        applyShowTimes()
+        showToast(showTimes ? "Timestamps shown" : "Timestamps hidden")
+    }
+    applyShowTimes()
+    function refreshTimes() {
+        canvas.querySelectorAll<HTMLElement>(".ftime").forEach((t) => {
+            t.textContent = relTime(Number(t.dataset.t))
+        })
+    }
+    const timesTimer = setInterval(refreshTimes, 30000)
 
     function hexToRgba(hex, a) {
         const n = parseInt(hex.slice(1), 16)
@@ -200,9 +403,15 @@ export function mountEditor(root: HTMLElement): () => void {
     }
 
     function renderCanvas() {
-        canvas.innerHTML = ""
+        world.innerHTML = ""
         const multi = selection.size > 1
-        items.forEach((it) => {
+        // frames sit under text
+        const ordered = [...items.filter(isFrame), ...items.filter(isText)]
+        ordered.forEach((it) => {
+            if (isFrame(it)) {
+                world.appendChild(renderFrame(it))
+                return
+            }
             const el = document.createElement("div")
             el.className =
                 "titem" +
@@ -222,10 +431,40 @@ export function mountEditor(root: HTMLElement): () => void {
                 e.stopPropagation()
                 startEditing(el, it)
             })
-            canvas.appendChild(el)
+            world.appendChild(el)
         })
         applyWash()
         renderSelectionOverlay()
+    }
+
+    function renderFrame(it: FrameItem) {
+        const el = document.createElement("div")
+        el.className = "frame" + (selection.has(it.id) ? " selected" : "")
+        el.style.left = it.x + "px"
+        el.style.top = it.y + "px"
+        el.style.width = it.w + "px"
+        el.style.height = it.h + "px"
+        el.dataset.id = String(it.id)
+
+        const label = document.createElement("div")
+        label.className = "flabel"
+        const name = document.createElement("span")
+        name.className = "fname"
+        name.textContent = it.name
+        const time = document.createElement("span")
+        time.className = "ftime"
+        time.dataset.t = String(it.updatedAt)
+        time.textContent = relTime(it.updatedAt)
+        time.title = absTime(it.updatedAt)
+        label.append(name, time)
+        el.appendChild(label)
+
+        el.addEventListener("pointerdown", (e) => onItemPointerDown(e, it, el))
+        name.addEventListener("dblclick", (e) => {
+            e.stopPropagation()
+            startRenaming(name, it)
+        })
+        return el
     }
 
     // One-time initial layout for the default demo lines: each line is
@@ -239,12 +478,7 @@ export function mountEditor(root: HTMLElement): () => void {
         if (!items.length) return
         const canvasW = canvas.clientWidth
         const canvasH = canvas.clientHeight
-        const rects = items.map((it) => {
-            const node = canvas.querySelector<HTMLElement>('[data-id="' + it.id + '"]')
-            return node
-                ? { w: node.offsetWidth, h: node.offsetHeight }
-                : { w: 0, h: 0 }
-        })
+        const rects = items.map(nodeSize)
         const firstY = items[0].y
         const lastIdx = items.length - 1
         const blockTop = firstY
@@ -256,19 +490,34 @@ export function mountEditor(root: HTMLElement): () => void {
         })
     }
 
-    /* Figma-style bounding box: combined bounds of the selection, corner handles, W × H badge */
-    function selectionBounds() {
-        const sel = selectedItems()
-        if (!sel.length) return null
+    // Wrap the demo text in a frame so frames + timestamps are visible on load.
+    function seedDemoFrame() {
+        const b = boundsOf(items.filter(isText))
+        if (!b) return
+        const PAD = 48
+        addFrame({
+            x: Math.round(b.x - PAD),
+            y: Math.round(b.y - PAD),
+            w: Math.round(b.w + PAD * 2),
+            h: Math.round(b.h + PAD * 2),
+        })
+    }
+
+    /* Rendered size of an item, in world units. Frames know their size;
+       text is measured off its node (unscaled layout size inside #world). */
+    function nodeSize(it: Item) {
+        if (isFrame(it)) return { w: it.w, h: it.h }
+        const node = canvas.querySelector<HTMLElement>('[data-id="' + it.id + '"]')
+        return node ? { w: node.offsetWidth, h: node.offsetHeight } : { w: 0, h: 0 }
+    }
+    function boundsOf(list: Item[]) {
+        if (!list.length) return null
         let x1 = Infinity,
             y1 = Infinity,
             x2 = -Infinity,
             y2 = -Infinity
-        sel.forEach((it) => {
-            const node = canvas.querySelector<HTMLElement>('[data-id="' + it.id + '"]')
-            if (!node) return
-            const w = node.offsetWidth,
-                h = node.offsetHeight
+        list.forEach((it) => {
+            const { w, h } = nodeSize(it)
             x1 = Math.min(x1, it.x)
             y1 = Math.min(y1, it.y)
             x2 = Math.max(x2, it.x + w)
@@ -276,6 +525,32 @@ export function mountEditor(root: HTMLElement): () => void {
         })
         if (x1 === Infinity) return null
         return { x: x1, y: y1, w: x2 - x1, h: y2 - y1 }
+    }
+    /* Figma-style bounding box: combined bounds of the selection */
+    function selectionBounds() {
+        return boundsOf(selectedItems())
+    }
+    function rectContains(f: FrameItem, it: Item) {
+        const { w, h } = nodeSize(it)
+        return (
+            it.x >= f.x &&
+            it.y >= f.y &&
+            it.x + w <= f.x + f.w &&
+            it.y + h <= f.y + f.h
+        )
+    }
+    // smallest frame fully containing the item, if any
+    function containingFrame(it: Item): FrameItem | null {
+        let best: FrameItem | null = null
+        items.filter(isFrame).forEach((f) => {
+            if (f.id === it.id || !rectContains(f, it)) return
+            if (!best || f.w * f.h < best.w * best.h) best = f
+        })
+        return best
+    }
+    function singleSelectedFrame(): FrameItem | null {
+        const sel = selectedItems()
+        return sel.length === 1 && isFrame(sel[0]) ? sel[0] : null
     }
 
     function renderSelectionOverlay() {
@@ -289,16 +564,83 @@ export function mountEditor(root: HTMLElement): () => void {
         box.style.top = b.y + "px"
         box.style.width = b.w + "px"
         box.style.height = b.h + "px"
+        const frame = singleSelectedFrame() // a lone frame gets live resize handles
         ;["tl", "tr", "bl", "br"].forEach((c) => {
             const h = document.createElement("div")
             h.className = "selhandle " + c
+            if (frame) {
+                h.classList.add("resizable")
+                h.addEventListener("pointerdown", (e) => startResize(e, frame, c))
+            }
             box.appendChild(h)
         })
         const size = document.createElement("div")
         size.className = "selsize"
-        size.textContent = Math.round(b.w) + " \u00d7 " + Math.round(b.h)
+        size.textContent = Math.round(b.w) + " × " + Math.round(b.h)
         box.appendChild(size)
-        canvas.appendChild(box)
+        world.appendChild(box)
+    }
+
+    function startResize(e: PointerEvent, it: FrameItem, corner: string) {
+        e.stopPropagation()
+        const start = toWorld(e.clientX, e.clientY)
+        const o = { x: it.x, y: it.y, w: it.w, h: it.h }
+        const pre = snapshot()
+        let moved = false
+        const MIN_SIZE = 20
+        function mv(ev: PointerEvent) {
+            const p = toWorld(ev.clientX, ev.clientY)
+            const dx = p.x - start.x,
+                dy = p.y - start.y
+            if (!moved) {
+                moved = true
+                pushHistory(pre)
+            }
+            // the corner opposite the grabbed one stays anchored
+            let x = o.x,
+                y = o.y,
+                w = o.w,
+                h = o.h
+            if (corner.includes("l")) {
+                x = Math.min(o.x + dx, o.x + o.w - MIN_SIZE)
+                w = o.x + o.w - x
+            } else w = Math.max(MIN_SIZE, o.w + dx)
+            if (corner.includes("t")) {
+                y = Math.min(o.y + dy, o.y + o.h - MIN_SIZE)
+                h = o.y + o.h - y
+            } else h = Math.max(MIN_SIZE, o.h + dy)
+            it.x = Math.round(x)
+            it.y = Math.round(y)
+            it.w = Math.round(w)
+            it.h = Math.round(h)
+            const node = canvas.querySelector<HTMLElement>('[data-id="' + it.id + '"]')
+            if (node) {
+                node.style.left = it.x + "px"
+                node.style.top = it.y + "px"
+                node.style.width = it.w + "px"
+                node.style.height = it.h + "px"
+            }
+            renderSelectionOverlay()
+            updateProps()
+        }
+        function up() {
+            document.removeEventListener("pointermove", mv)
+            document.removeEventListener("pointerup", up)
+            if (moved) {
+                it.updatedAt = Date.now()
+                emit()
+            }
+        }
+        document.addEventListener("pointermove", mv)
+        document.addEventListener("pointerup", up)
+    }
+
+    function selectAllText(el: HTMLElement) {
+        const range = document.createRange()
+        range.selectNodeContents(el)
+        const s = window.getSelection()
+        s.removeAllRanges()
+        s.addRange(range)
     }
 
     function startEditing(el, it) {
@@ -307,11 +649,7 @@ export function mountEditor(root: HTMLElement): () => void {
         const preEdit = snapshot()
         el.setAttribute("contenteditable", "true")
         el.focus()
-        const range = document.createRange()
-        range.selectNodeContents(el)
-        const s = window.getSelection()
-        s.removeAllRanges()
-        s.addRange(range)
+        selectAllText(el)
         function done() {
             el.removeAttribute("contenteditable")
             const newText = el.textContent.trim() || "Text"
@@ -337,7 +675,40 @@ export function mountEditor(root: HTMLElement): () => void {
         })
     }
 
-    function onItemPointerDown(e, it, el) {
+    // Double-click a frame's name to rename it inline.
+    function startRenaming(nameEl: HTMLElement, it: FrameItem) {
+        const pre = snapshot()
+        nameEl.setAttribute("contenteditable", "true")
+        nameEl.focus()
+        selectAllText(nameEl)
+        const stop = (e: Event) => e.stopPropagation() // typing/clicking in the name must not drag the frame
+        nameEl.addEventListener("pointerdown", stop)
+        function done() {
+            nameEl.removeAttribute("contenteditable")
+            nameEl.removeEventListener("blur", done)
+            nameEl.removeEventListener("pointerdown", stop)
+            const v = nameEl.textContent.trim() || it.name
+            if (v !== it.name) {
+                pushHistory(pre)
+                it.name = v
+                it.updatedAt = Date.now()
+            }
+            emit()
+        }
+        nameEl.addEventListener("blur", done)
+        nameEl.addEventListener("keydown", (e) => {
+            e.stopPropagation()
+            if (e.key === "Enter" || e.key === "Escape") {
+                e.preventDefault()
+                nameEl.blur()
+            }
+        })
+    }
+
+    function onItemPointerDown(e: PointerEvent, it: Item, el: HTMLElement) {
+        // panning and the frame tool are handled by the canvas — let it bubble
+        if (spaceDown || e.button === 1 || tool === "frame") return
+        if (e.button !== 0) return
         if (el.getAttribute("contenteditable") === "true") return
         e.stopPropagation()
 
@@ -363,14 +734,25 @@ export function mountEditor(root: HTMLElement): () => void {
             x: s.x,
             y: s.y,
         }))
+        // a frame carries the text sitting inside it, selected or not
+        const carried = new Set(starts.map((s) => s.it.id))
+        selectedItems()
+            .filter(isFrame)
+            .forEach((f) => {
+                items.filter(isText).forEach((t) => {
+                    if (carried.has(t.id) || !rectContains(f, t)) return
+                    carried.add(t.id)
+                    starts.push({ it: t, x: t.x, y: t.y })
+                })
+            })
         const preDrag = snapshot() // pre-state: pushed once if the gesture actually moves anything
         let moved = false
         let duplicated = false
         liveEl.classList.add("dragging")
-        function mv(ev) {
-            const dx = ev.clientX - startX,
-                dy = ev.clientY - startY
-            if (!moved && (Math.abs(dx) > 2 || Math.abs(dy) > 2)) {
+        function mv(ev: PointerEvent) {
+            const dx = (ev.clientX - startX) / view.z,
+                dy = (ev.clientY - startY) / view.z
+            if (!moved && (Math.abs(dx) * view.z > 2 || Math.abs(dy) * view.z > 2)) {
                 moved = true
                 pushHistory(preDrag)
             }
@@ -378,16 +760,7 @@ export function mountEditor(root: HTMLElement): () => void {
             // or pressed at any point during the drag: a copy is left at the origin
             if (moved && !duplicated && (ev.altKey || ev.ctrlKey)) {
                 duplicated = true
-                starts.forEach((s) => {
-                    addItem({
-                        x: s.x,
-                        y: s.y,
-                        text: s.it.text,
-                        size: s.it.size,
-                        font: s.it.font,
-                        weight: s.it.weight,
-                    })
-                })
+                starts.forEach((s) => duplicateItem(s.it, s.x, s.y))
                 emit()
             }
             starts.forEach((s) => {
@@ -410,18 +783,82 @@ export function mountEditor(root: HTMLElement): () => void {
             liveEl.classList.remove("dragging")
             document.removeEventListener("pointermove", mv)
             document.removeEventListener("pointerup", up)
-            if (moved) emit()
+            if (moved) {
+                const now = Date.now()
+                starts.forEach((s) => {
+                    if (isFrame(s.it)) s.it.updatedAt = now
+                })
+                emit()
+            }
         }
         document.addEventListener("pointermove", mv)
         document.addEventListener("pointerup", up)
     }
 
-    /* marquee drag-select on empty canvas */
-    canvas.addEventListener("pointerdown", (e) => {
-        if (e.target !== canvas) return
+    /* frame tool: drag to draw; a plain click drops a default-sized frame */
+    function startFrameDraw(e: PointerEvent) {
+        const s = toWorld(e.clientX, e.clientY)
+        let draft: HTMLDivElement | null = null
+        let r: { x: number; y: number; w: number; h: number } | null = null
+        function mv(ev: PointerEvent) {
+            const p = toWorld(ev.clientX, ev.clientY)
+            if (
+                !draft &&
+                (Math.abs(p.x - s.x) * view.z > 3 || Math.abs(p.y - s.y) * view.z > 3)
+            ) {
+                draft = document.createElement("div")
+                draft.className = "frame-draft"
+                world.appendChild(draft)
+            }
+            if (!draft) return
+            r = {
+                x: Math.min(s.x, p.x),
+                y: Math.min(s.y, p.y),
+                w: Math.abs(p.x - s.x),
+                h: Math.abs(p.y - s.y),
+            }
+            draft.style.left = r.x + "px"
+            draft.style.top = r.y + "px"
+            draft.style.width = r.w + "px"
+            draft.style.height = r.h + "px"
+        }
+        function up() {
+            document.removeEventListener("pointermove", mv)
+            document.removeEventListener("pointerup", up)
+            if (draft) draft.remove()
+            const box =
+                r && r.w >= 8 && r.h >= 8 ? r : { x: s.x, y: s.y, w: 200, h: 150 }
+            pushHistory()
+            const f = addFrame({
+                x: Math.round(box.x),
+                y: Math.round(box.y),
+                w: Math.round(box.w),
+                h: Math.round(box.h),
+            })
+            selection.clear()
+            selection.add(f.id)
+            setTool("move")
+            emit()
+        }
+        document.addEventListener("pointermove", mv)
+        document.addEventListener("pointerup", up)
+    }
+
+    /* canvas: pan, frame tool, or marquee drag-select on empty space */
+    canvas.addEventListener("pointerdown", (e: PointerEvent) => {
+        if (spaceDown || e.button === 1) {
+            e.preventDefault()
+            startPan(e)
+            return
+        }
+        if (e.button !== 0) return
+        if (tool === "frame") {
+            startFrameDraw(e)
+            return
+        }
+        if (e.target !== canvas && e.target !== world) return
         const rect = canvas.getBoundingClientRect()
-        const sx = e.clientX - rect.left,
-            sy = e.clientY - rect.top
+        const s = toWorld(e.clientX, e.clientY)
         let marquee: HTMLDivElement | null = null,
             marqueeRect: { x: number; y: number; w: number; h: number } | null = null,
             moved = false
@@ -429,12 +866,7 @@ export function mountEditor(root: HTMLElement): () => void {
         function hits(r) {
             const out = new Set<number>()
             items.forEach((it) => {
-                const node = canvas.querySelector<HTMLElement>(
-                    '[data-id="' + it.id + '"]'
-                )
-                if (!node) return
-                const iw = node.offsetWidth,
-                    ih = node.offsetHeight
+                const { w: iw, h: ih } = nodeSize(it)
                 if (
                     it.x < r.x + r.w &&
                     it.x + iw > r.x &&
@@ -445,29 +877,25 @@ export function mountEditor(root: HTMLElement): () => void {
             })
             return out
         }
-        function mv(ev) {
-            const cx = Math.max(
-                0,
-                Math.min(rect.width, ev.clientX - rect.left)
-            )
-            const cy = Math.max(
-                0,
-                Math.min(rect.height, ev.clientY - rect.top)
-            )
+        function mv(ev: PointerEvent) {
+            // clamp to the canvas on screen, then convert to world coords
+            const cx = Math.max(rect.left, Math.min(rect.right, ev.clientX))
+            const cy = Math.max(rect.top, Math.min(rect.bottom, ev.clientY))
+            const p = toWorld(cx, cy)
             if (
                 !moved &&
-                (Math.abs(cx - sx) > 3 || Math.abs(cy - sy) > 3)
+                (Math.abs(cx - e.clientX) > 3 || Math.abs(cy - e.clientY) > 3)
             ) {
                 moved = true
                 marquee = document.createElement("div")
                 marquee.className = "marquee"
-                canvas.appendChild(marquee)
+                world.appendChild(marquee)
             }
             if (!marquee) return
-            const x = Math.min(sx, cx),
-                y = Math.min(sy, cy)
-            const w = Math.abs(cx - sx),
-                h = Math.abs(cy - sy)
+            const x = Math.min(s.x, p.x),
+                y = Math.min(s.y, p.y)
+            const w = Math.abs(p.x - s.x),
+                h = Math.abs(p.y - s.y)
             marquee.style.left = x + "px"
             marquee.style.top = y + "px"
             marquee.style.width = w + "px"
@@ -481,7 +909,7 @@ export function mountEditor(root: HTMLElement): () => void {
                 )
                 if (node)
                     node.classList.toggle(
-                        "sel-underline",
+                        isFrame(it) ? "hover" : "sel-underline",
                         touched.has(it.id)
                     )
             })
@@ -490,7 +918,7 @@ export function mountEditor(root: HTMLElement): () => void {
             document.removeEventListener("pointermove", mv)
             document.removeEventListener("pointerup", up)
             if (moved && marquee) {
-                const r = marqueeRect || { x: sx, y: sy, w: 0, h: 0 }
+                const r = marqueeRect || { x: s.x, y: s.y, w: 0, h: 0 }
                 marquee.remove()
                 selection.clear()
                 hits(r).forEach((id) => selection.add(id))
@@ -504,17 +932,58 @@ export function mountEditor(root: HTMLElement): () => void {
         document.addEventListener("pointerup", up)
     })
 
-    /* keyboard delete */
+    /* keyboard: tools, zoom, timestamps, delete */
     onDoc("keydown", (e) => {
-        if (e.key !== "Delete" && e.key !== "Backspace") return
         const a = document.activeElement as HTMLElement | null
-        if (
+        const typing =
             a &&
             (a.tagName === "INPUT" ||
                 a.tagName === "SELECT" ||
                 a.isContentEditable)
-        )
+        if (e.code === "Space" && !typing) {
+            if (!spaceDown) setSpaceDown(true)
+            e.preventDefault()
             return
+        }
+        const mod = e.metaKey || e.ctrlKey
+        if (mod && (e.key === "=" || e.key === "+")) {
+            e.preventDefault()
+            zoomCenter(1.25)
+            return
+        }
+        if (mod && e.key === "-") {
+            e.preventDefault()
+            zoomCenter(1 / 1.25)
+            return
+        }
+        if (mod && e.key === "0") {
+            e.preventDefault()
+            resetView()
+            return
+        }
+        if (typing || mod) return
+        if (e.shiftKey && (e.key === "T" || e.key === "t")) {
+            e.preventDefault()
+            toggleTimes()
+            return
+        }
+        if (e.key === "v" || e.key === "V") {
+            setTool("move")
+            return
+        }
+        if (e.key === "f" || e.key === "F") {
+            setTool("frame")
+            return
+        }
+        if (e.key === "Escape") {
+            if (tool !== "move") setTool("move")
+            else if (selection.size) {
+                selection.clear()
+                emit()
+            }
+            return
+        }
+        if (e.key !== "Delete" && e.key !== "Backspace") return
         if (!selection.size) return
         e.preventDefault()
         pushHistory()
@@ -523,6 +992,9 @@ export function mountEditor(root: HTMLElement): () => void {
         }
         selection.clear()
         emit()
+    })
+    onDoc("keyup", (e) => {
+        if (e.code === "Space") setSpaceDown(false)
     })
 
     /* version buttons in the canvas pill */
@@ -926,26 +1398,22 @@ export function mountEditor(root: HTMLElement): () => void {
     function alignSelection(kind) {
         const sel = selectedItems()
         if (!sel.length) return
-        // target frame: the selection's own bounds for multi, the whole canvas for single
+        // target: the selection's own bounds for multi; for a single item, the
+        // frame it sits in, or the visible viewport if it isn't in one
         let frame
         if (sel.length > 1) {
             const b = selectionBounds()
             if (!b) return
             frame = { x: b.x, y: b.y, w: b.w, h: b.h }
         } else {
-            frame = {
-                x: 0,
-                y: 0,
-                w: canvas.clientWidth,
-                h: canvas.clientHeight,
-            }
+            const parent = containingFrame(sel[0])
+            frame = parent
+                ? { x: parent.x, y: parent.y, w: parent.w, h: parent.h }
+                : viewportWorldRect()
         }
         pushHistory()
         sel.forEach((it) => {
-            const node = canvas.querySelector<HTMLElement>('[data-id="' + it.id + '"]')
-            if (!node) return
-            const iw = node.offsetWidth,
-                ih = node.offsetHeight
+            const { w: iw, h: ih } = nodeSize(it)
             if (kind === "left") it.x = frame.x
             if (kind === "centerH") it.x = frame.x + (frame.w - iw) / 2
             if (kind === "right") it.x = frame.x + frame.w - iw
@@ -977,6 +1445,9 @@ export function mountEditor(root: HTMLElement): () => void {
                 i.placeholder = "\u2013"
             }
         })
+        // W/H are readouts, except for a lone frame where they're editable
+        const frame = singleSelectedFrame()
+        dimW.disabled = dimH.disabled = !frame
         if (none) {
             dimW.value = ""
             dimH.value = ""
@@ -989,8 +1460,10 @@ export function mountEditor(root: HTMLElement): () => void {
                 posX.value = String(Math.round(b.x))
             if (document.activeElement !== posY)
                 posY.value = String(Math.round(b.y))
-            dimW.value = String(Math.round(b.w))
-            dimH.value = String(Math.round(b.h))
+            if (document.activeElement !== dimW)
+                dimW.value = String(Math.round(b.w))
+            if (document.activeElement !== dimH)
+                dimH.value = String(Math.round(b.h))
         }
     }
 
@@ -1016,7 +1489,7 @@ export function mountEditor(root: HTMLElement): () => void {
         const dx = v - b.x
         if (dx === 0) return
         consumePos()
-        selectedItems().forEach((it) => (it.x += dx))
+        moveSelection(dx, 0)
         emit()
     })
     posY.addEventListener("input", () => {
@@ -1027,10 +1500,36 @@ export function mountEditor(root: HTMLElement): () => void {
         const dy = v - b.y
         if (dy === 0) return
         consumePos()
-        selectedItems().forEach((it) => (it.y += dy))
+        moveSelection(0, dy)
         emit()
     })
-    ;[posX, posY].forEach((i) => {
+    function moveSelection(dx: number, dy: number) {
+        const now = Date.now()
+        selectedItems().forEach((it) => {
+            it.x += dx
+            it.y += dy
+            if (isFrame(it)) it.updatedAt = now
+        })
+    }
+    dimW.addEventListener("focus", armPos)
+    dimH.addEventListener("focus", armPos)
+    ;([
+        [dimW, "w"],
+        [dimH, "h"],
+    ] as Array<[HTMLInputElement, "w" | "h"]>).forEach(([input, key]) => {
+        input.addEventListener("input", () => {
+            const frame = singleSelectedFrame()
+            const v = parseFloat(input.value)
+            if (!frame || isNaN(v)) return
+            const next = Math.max(20, Math.round(v))
+            if (next === frame[key]) return
+            consumePos()
+            frame[key] = next
+            frame.updatedAt = Date.now()
+            emit()
+        })
+    })
+    ;[posX, posY, dimW, dimH].forEach((i) => {
         i.addEventListener("blur", () => {
             posPre = null
             updateProps()
@@ -1082,7 +1581,7 @@ export function mountEditor(root: HTMLElement): () => void {
             applyWash()
         },
         list() {
-            return selectedItems().map((it) => ({
+            return selectedTextItems().map((it) => ({
                 id: it.id,
                 color: selColor(it.id),
                 value: it.size,
@@ -1090,7 +1589,7 @@ export function mountEditor(root: HTMLElement): () => void {
         },
         set(id, v) {
             const it = items.find((i) => i.id === id)
-            if (!it) return
+            if (!it || !isText(it)) return
             v = Math.max(MIN, Math.min(MAX, Math.round(v)))
             if (v === it.size) return
             if (pendingPre) {
@@ -1105,24 +1604,24 @@ export function mountEditor(root: HTMLElement): () => void {
         // ONE undo entry (setAll would push history on every pixel).
         setAllLive(v) {
             v = Math.max(MIN, Math.min(MAX, Math.round(v)))
-            if (selectedItems().every((it) => it.size === v)) return
+            if (selectedTextItems().every((it) => it.size === v)) return
             if (pendingPre) {
                 pushHistory(pendingPre)
                 pendingPre = null
             }
-            selectedItems().forEach((it) => (it.size = v))
+            selectedTextItems().forEach((it) => (it.size = v))
             emit()
         },
         setAll(v) {
             v = Math.max(MIN, Math.min(MAX, Math.round(v)))
-            if (selectedItems().every((it) => it.size === v)) return
+            if (selectedTextItems().every((it) => it.size === v)) return
             this._consumeOrPush()
-            selectedItems().forEach((it) => (it.size = v))
+            selectedTextItems().forEach((it) => (it.size = v))
             emit()
         },
         nudge(s) {
             this._consumeOrPush()
-            selectedItems().forEach(
+            selectedTextItems().forEach(
                 (it) =>
                     (it.size = Math.max(MIN, Math.min(MAX, it.size + s)))
             )
@@ -1188,7 +1687,7 @@ export function mountEditor(root: HTMLElement): () => void {
 
         let open = false
         function setOpen(v) {
-            if (selection.size === 0) v = false
+            if (selectedTextItems().length === 0) v = false
             open = v
             drawer.classList.toggle("open", v)
             if (v) tooltip.classList.remove("visible")
@@ -1202,7 +1701,7 @@ export function mountEditor(root: HTMLElement): () => void {
         }
 
         function updateField(force?: boolean) {
-            const sel = selectedItems()
+            const sel = selectedTextItems()
             if (sel.length === 0) {
                 input.value = ""
                 input.placeholder = "–"
@@ -1225,7 +1724,7 @@ export function mountEditor(root: HTMLElement): () => void {
             }
         }
         function updateTooltip() {
-            const sel = selectedItems()
+            const sel = selectedTextItems()
             dotsRow.innerHTML = ""
             sel.forEach((it) => {
                 const dot = document.createElement("span")
@@ -1281,7 +1780,7 @@ export function mountEditor(root: HTMLElement): () => void {
             updateField()
         })
         sizewrap.addEventListener("mouseenter", () => {
-            if (!open && selection.size > 1) {
+            if (!open && selectedTextItems().length > 1) {
                 updateTooltip()
                 tooltip.classList.add("visible")
             }
@@ -1360,6 +1859,8 @@ export function mountEditor(root: HTMLElement): () => void {
 
     renderCanvas()
     centerDefaultItems() // needs real measurements from the render above
+    seedDemoFrame()
+    applyView()
     renderCanvas() // re-render with the centered positions
     buildPanel()
     updateProps()
@@ -1368,6 +1869,9 @@ export function mountEditor(root: HTMLElement): () => void {
 
     return () => {
         docListeners.forEach(([t, f]) => document.removeEventListener(t, f))
+        window.removeEventListener("blur", onWindowBlur)
+        clearInterval(timesTimer)
+        clearTimeout(toastTimer)
         root.innerHTML = ""
     }
 }
