@@ -25,6 +25,8 @@ src/
     markup.ts            Static sidebar/canvas markup the engine renders into
     editor.css           All editor styling
     time.ts              Relative/absolute time formatting for frame timestamps
+    color.ts             Color math (hex/rgb/hsv) shared by the engine and the picker
+  components/ColorPicker.tsx  Controlled color picker rendered by the React shell
 reference/               Original Framer components this was ported from
 ```
 
@@ -41,6 +43,11 @@ reference/               Original Framer components this was ported from
   hover the timestamp for the full date. `Shift+T` toggles timestamps (remembered)
 - Double-click the name to rename · drag corner handles to resize · W/H editable in the sidebar
 - Dragging a frame carries the text sitting inside it; deleting a frame leaves the text
+
+**Fill**
+- The Fill row in the sidebar shows the selection's color and alpha (or "Mixed"); click it
+  to open the color picker (ported from `reference/color_picker.tsx`). Changes apply live to
+  every selected layer — frame backgrounds and text color — and one picker session is one undo step
 
 **Text**
 - Click / shift-click / marquee-drag to select layers; drag to move

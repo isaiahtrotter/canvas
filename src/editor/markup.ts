@@ -51,7 +51,7 @@ export const MARKUP = `
       <div class="sp-divider"></div>
       <div class="sp-section">
         <div class="sp-label">Fill</div>
-        <div class="fillrow"><span class="swatch"></span><span class="hex">1C1C1C</span><span class="pct">100%</span></div>
+        <button class="fillrow" id="fillRow" type="button" tabindex="-1" aria-label="Fill color"><span class="swatch"></span><span class="hex">1C1C1C</span><span class="pct">100%</span></button>
       </div>
     </div>
   </div>

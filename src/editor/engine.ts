@@ -3,6 +3,7 @@
 // and returns a cleanup that tears the whole thing down.
 import { MARKUP } from "./markup"
 import { absTime, relTime } from "./time"
+import { isHex, rgbaCss } from "./color"
 
 interface TextItem {
     kind: "text"
@@ -14,6 +15,8 @@ interface TextItem {
     font: string
     weight: number
     opacity?: number
+    fill: string // hex
+    alpha: number // 0–100
 }
 
 export interface FrameItem {
@@ -26,13 +29,34 @@ export interface FrameItem {
     name: string
     createdAt: number
     updatedAt: number
+    fill: string // hex
+    alpha: number // 0–100
+}
+
+export interface Fill {
+    hex: string
+    alpha: number
+}
+/** What the editor tells its host about the Fill control. */
+export interface EditorHooks {
+    /** The fill swatch was clicked: open a picker anchored to `anchor`. */
+    onFillOpen?: (anchor: DOMRect, fill: Fill) => void
+    /** Selection changed while the host may be showing a picker: `null` means nothing is selected. */
+    onFillChange?: (fill: Fill | null) => void
+}
+export interface EditorAPI {
+    /** Apply a fill to every selected layer. The first call after beginFillGesture() logs one undo step. */
+    setFill: (hex: string, alpha: number) => void
+    beginFillGesture: () => void
+    endFillGesture: () => void
+    destroy: () => void
 }
 
 type Item = TextItem | FrameItem
 const isFrame = (it: Item): it is FrameItem => it.kind === "frame"
 const isText = (it: Item): it is TextItem => it.kind === "text"
 
-export function mountEditor(root: HTMLElement): () => void {
+export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorAPI {
     root.innerHTML = MARKUP
 
     // document-level listeners, tracked so unmount removes them
@@ -151,6 +175,8 @@ export function mountEditor(root: HTMLElement): () => void {
                 font: "Inter",
                 weight: 400,
                 opacity: 100,
+                fill: "#1c1c1c",
+                alpha: 100,
             },
             props
         )
@@ -173,6 +199,8 @@ export function mountEditor(root: HTMLElement): () => void {
                 name: "Frame " + frameCount,
                 createdAt: now,
                 updatedAt: now,
+                fill: "#ffffff",
+                alpha: 100,
             },
             props
         )
@@ -392,7 +420,8 @@ export function mountEditor(root: HTMLElement): () => void {
         )
     }
     function applyWash() {
-        items.forEach((it) => {
+        // text only — a frame's background is its fill
+        items.filter(isText).forEach((it) => {
             const node = canvas.querySelector<HTMLElement>('[data-id="' + it.id + '"]')
             if (!node) return
             node.style.background =
@@ -422,6 +451,7 @@ export function mountEditor(root: HTMLElement): () => void {
             el.style.fontFamily = it.font
             el.style.fontWeight = String(it.weight)
             el.style.opacity = String((it.opacity != null ? it.opacity : 100) / 100)
+            el.style.color = rgbaCss(it.fill, it.alpha)
             el.textContent = it.text
             el.dataset.id = String(it.id)
             el.addEventListener("pointerdown", (e) =>
@@ -444,6 +474,7 @@ export function mountEditor(root: HTMLElement): () => void {
         el.style.top = it.y + "px"
         el.style.width = it.w + "px"
         el.style.height = it.h + "px"
+        el.style.background = rgbaCss(it.fill, it.alpha)
         el.dataset.id = String(it.id)
 
         const label = document.createElement("div")
@@ -1429,6 +1460,77 @@ export function mountEditor(root: HTMLElement): () => void {
         alignBtns.forEach((b) => (b.disabled = none))
     }
 
+    /* ---- fill: swatch + hex + alpha for the selection; the host renders the picker ---- */
+    const fillRow = root.querySelector<HTMLElement>("#fillRow")
+    const fillSwatch = fillRow.querySelector<HTMLElement>(".swatch")
+    const fillHex = fillRow.querySelector<HTMLElement>(".hex")
+    const fillPct = fillRow.querySelector<HTMLElement>(".pct")
+    // shared fill of the selection, or null when empty / mixed
+    function selectionFill(): { fill: Fill | null; mixed: boolean } {
+        const sel = selectedItems()
+        if (!sel.length) return { fill: null, mixed: false }
+        const f = { hex: sel[0].fill, alpha: sel[0].alpha }
+        const mixed = sel.some((it) => it.fill !== f.hex || it.alpha !== f.alpha)
+        return { fill: mixed ? null : f, mixed }
+    }
+    function updateFill() {
+        const { fill, mixed } = selectionFill()
+        fillRow.classList.toggle("disabled", !selection.size)
+        fillRow.classList.toggle("mixed", mixed)
+        if (fill) {
+            fillSwatch.style.background = rgbaCss(fill.hex, fill.alpha)
+            fillHex.textContent = fill.hex.replace("#", "").toUpperCase()
+            fillPct.textContent = fill.alpha + "%"
+        } else {
+            fillSwatch.style.background = mixed
+                ? "linear-gradient(135deg,#1c1c1c 50%,#fff 50%)"
+                : "#1c1c1c"
+            fillHex.textContent = mixed ? "Mixed" : "–"
+            fillPct.textContent = ""
+        }
+        // a different selection under an open picker starts a fresh undo step
+        const sig = Array.from(selection).sort((a, b) => a - b).join(",")
+        if (sig !== fillSelSig) {
+            fillSelSig = sig
+            if (fillGesture) fillPre = snapshot()
+        }
+        if (hooks.onFillChange)
+            hooks.onFillChange(selection.size ? fill ?? { hex: sel0Fill(), alpha: 100 } : null)
+    }
+    function sel0Fill() {
+        const sel = selectedItems()
+        return sel.length ? sel[0].fill : "#1c1c1c"
+    }
+    fillRow.addEventListener("click", () => {
+        if (!selection.size || !hooks.onFillOpen) return
+        const { fill } = selectionFill()
+        hooks.onFillOpen(fillRow.getBoundingClientRect(), fill ?? { hex: sel0Fill(), alpha: 100 })
+    })
+    // A picker session is one gesture: the snapshot taken when it opens (or
+    // when the selection changes under it) is pushed once, on the first change.
+    let fillPre = null
+    let fillGesture = false
+    let fillSelSig = ""
+    function setFill(hex: string, alpha: number) {
+        if (!isHex(hex)) return
+        hex = (hex.startsWith("#") ? hex : "#" + hex).toLowerCase()
+        alpha = Math.max(0, Math.min(100, Math.round(alpha)))
+        const sel = selectedItems()
+        if (!sel.length) return
+        if (sel.every((it) => it.fill === hex && it.alpha === alpha)) return
+        if (fillPre) {
+            pushHistory(fillPre)
+            fillPre = null
+        } else if (!fillGesture) pushHistory()
+        const now = Date.now()
+        sel.forEach((it) => {
+            it.fill = hex
+            it.alpha = alpha
+            if (isFrame(it)) it.updatedAt = now
+        })
+        emit()
+    }
+
     // position / dimensions / opacity fields, live-bound to the selection
     const posX = root.querySelector<HTMLInputElement>("#posX")
     const posY = root.querySelector<HTMLInputElement>("#posY")
@@ -1841,6 +1943,7 @@ export function mountEditor(root: HTMLElement): () => void {
     subscribe(() => {
         updateProps()
         updateAlignButtons()
+        updateFill()
         if (panelAPI) {
             panelAPI.updateField()
             panelAPI.updateTooltip()
@@ -1865,13 +1968,27 @@ export function mountEditor(root: HTMLElement): () => void {
     buildPanel()
     updateProps()
     updateAlignButtons()
+    updateFill()
     updateVariantButtons()
 
-    return () => {
+    const destroy = () => {
         docListeners.forEach(([t, f]) => document.removeEventListener(t, f))
         window.removeEventListener("blur", onWindowBlur)
         clearInterval(timesTimer)
         clearTimeout(toastTimer)
         root.innerHTML = ""
+    }
+
+    return {
+        setFill,
+        beginFillGesture: () => {
+            fillGesture = true
+            fillPre = snapshot()
+        },
+        endFillGesture: () => {
+            fillGesture = false
+            fillPre = null
+        },
+        destroy,
     }
 }

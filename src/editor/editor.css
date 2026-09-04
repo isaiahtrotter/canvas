@@ -45,9 +45,10 @@
 }
 .ftime{color:#b0b0ae;font-weight:400;font-variant-numeric:tabular-nums;}
 .hide-times .ftime{display:none;}
+/* drawing a frame previews as a real (white) frame, not a selection */
 .frame-draft{
-  position:absolute;border:1px solid var(--accent);background:rgba(12,140,233,.06);
-  pointer-events:none;
+  position:absolute;background:#fff;border:1px solid #c9c9c7;
+  box-shadow:0 1px 2px rgba(0,0,0,.03);pointer-events:none;
 }
 /* cursor:pointer is the CustomCursor hand trigger — it reads the computed
    cursor value, so anything draggable here gets the morphing hand for free */
@@ -172,7 +173,15 @@
 .pi input:disabled{color:#b0b0ae;}
 .pi:has(input:focus){background:#e8e8e5;}
 
-.fillrow{display:flex;align-items:center;gap:8px;background:#f2f2f0;border-radius:10px;padding:7px 10px;opacity:.5;}
+.fillrow{
+  display:flex;align-items:center;gap:8px;background:#f2f2f0;border-radius:10px;padding:7px 10px;
+  width:100%;border:none;font-family:inherit;cursor:pointer;text-align:left;transition:background .12s, opacity .12s;
+}
+.fillrow:hover{background:#e8e8e5;}
+.fillrow.open{background:#e8e8e5;}
+.fillrow.disabled{opacity:.5;cursor:default;}
+.fillrow.disabled:hover{background:#f2f2f0;}
+.fillrow.mixed .hex{color:#9a9a9a;font-style:italic;}
 .fillrow .swatch{width:16px;height:16px;border-radius:4px;background:#1c1c1c;border:1px solid #d0d0d0;flex-shrink:0;}
 .fillrow .hex{font-size:12px;color:#1c1c1c;font-variant-numeric:tabular-nums;}
 .fillrow .pct{font-size:12px;color:#9a9a9a;margin-left:auto;font-variant-numeric:tabular-nums;}
