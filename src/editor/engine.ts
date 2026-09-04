@@ -104,7 +104,7 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
             numtagPos: "below",
         },
     }
-    let activeVariant = 2
+    let activeVariant = 1
 
     /* ================= app state ================= */
     let nextId = 1
@@ -372,14 +372,16 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
         minimap.classList.add("dragging")
         const start = { x: e.clientX, y: e.clientY, vx: view.x, vy: view.y }
         const vp0 = viewportWorldRect()
-        const maxX = MM_W - vp0.w * mmScale,
-            maxY = MM_H - vp0.h * mmScale
+        // keep an 8px gutter so the rectangle never touches the map's edge
+        const MM_GUTTER = 8
+        const maxX = MM_W - MM_GUTTER - vp0.w * mmScale,
+            maxY = MM_H - MM_GUTTER - vp0.h * mmScale
         function mv(ev: PointerEvent) {
             // desired rect position in minimap px, clamped inside the map
             let mx = (vp0.x - mmOx) * mmScale + (ev.clientX - start.x)
             let my = (vp0.y - mmOy) * mmScale + (ev.clientY - start.y)
-            mx = Math.max(0, Math.min(maxX, mx))
-            my = Math.max(0, Math.min(maxY, my))
+            mx = Math.max(MM_GUTTER, Math.min(maxX, mx))
+            my = Math.max(MM_GUTTER, Math.min(maxY, my))
             const wx = mx / mmScale + mmOx,
                 wy = my / mmScale + mmOy
             view.x = -wx * view.z

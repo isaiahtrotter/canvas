@@ -24,21 +24,6 @@ export const MARKUP = `
       </div>
       <div class="sp-divider"></div>
       <div class="sp-section">
-        <div class="sp-label">Versions</div>
-        <div class="vergroup">
-          <div class="vind" id="vind"></div>
-          <button class="vbtn" data-v="1" tabindex="-1">1</button>
-          <button class="vbtn" data-v="2" tabindex="-1">2</button>
-          <button class="vbtn" data-v="3" tabindex="-1">3</button>
-        </div>
-      </div>
-      <div class="sp-divider"></div>
-      <div class="sp-section">
-        <div class="sp-label">Text</div>
-        <div class="propgroup" id="panelGroup"></div>
-      </div>
-      <div class="sp-divider"></div>
-      <div class="sp-section">
         <div class="sp-label">Position</div>
         <div class="proprow">
           <div class="pi"><span class="pi-key">X</span><input id="posX" inputmode="numeric" aria-label="X position"></div>
@@ -53,6 +38,21 @@ export const MARKUP = `
       <div class="sp-section">
         <div class="sp-label">Fill</div>
         <button class="fillrow" id="fillRow" type="button" tabindex="-1" aria-label="Fill color"><span class="swatch"></span><span class="hex">1C1C1C</span><span class="pct">100%</span></button>
+      </div>
+      <div class="sp-divider"></div>
+      <div class="sp-section">
+        <div class="sp-label">Versions</div>
+        <div class="vergroup">
+          <div class="vind" id="vind"></div>
+          <button class="vbtn" data-v="1" tabindex="-1">1</button>
+          <button class="vbtn" data-v="2" tabindex="-1">2</button>
+          <button class="vbtn" data-v="3" tabindex="-1">3</button>
+        </div>
+      </div>
+      <div class="sp-divider"></div>
+      <div class="sp-section">
+        <div class="sp-label">Text</div>
+        <div class="propgroup" id="panelGroup"></div>
       </div>
     </div>
   </div>
