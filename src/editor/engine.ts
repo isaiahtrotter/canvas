@@ -115,7 +115,43 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
         listeners.push(fn)
     }
     function emit() {
+        touchParentFrames()
         listeners.forEach((fn) => fn())
+    }
+
+    /* A frame's "edited" time also moves when anything inside it changes.
+       Rather than sprinkling bumps through every mutation path, each emit
+       diffs text layers against the last emit: a text that changed (moved,
+       retyped, restyled, or newly added) bumps the frame that contains it now
+       and, if it moved, the one it came from. Undo/redo set `restoring` so a
+       restored snapshot keeps the timestamps it was saved with. */
+    let restoring = false
+    const lastText = new Map<number, { sig: string; x: number; y: number }>()
+    function textSig(it: TextItem) {
+        return [it.x, it.y, it.text, it.size, it.font, it.weight, it.fill, it.alpha].join("|")
+    }
+    function touchParentFrames() {
+        const now = Date.now()
+        const seen = new Set<number>()
+        items.filter(isText).forEach((t) => {
+            seen.add(t.id)
+            const sig = textSig(t)
+            const prev = lastText.get(t.id)
+            if (!prev || prev.sig !== sig) {
+                if (!restoring) {
+                    const bump = (f: FrameItem | null) => {
+                        if (f) f.updatedAt = now
+                    }
+                    bump(containingFrame(t))
+                    if (prev && (prev.x !== t.x || prev.y !== t.y))
+                        bump(containingFrame({ ...t, x: prev.x, y: prev.y }))
+                }
+                lastText.set(t.id, { sig, x: t.x, y: t.y })
+            }
+        })
+        lastText.forEach((_, id) => {
+            if (!seen.has(id)) lastText.delete(id)
+        })
     }
 
     /* ---- undo history: up to 20 steps ---- */
@@ -139,7 +175,9 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
         selection.clear()
         st.selection.forEach((id) => selection.add(id))
         nextId = items.reduce((m, it) => Math.max(m, it.id), 0) + 1
+        restoring = true
         emit()
+        restoring = false
     }
     function undo() {
         if (!history.length) return
@@ -1074,8 +1112,16 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
         if (!selection.size) return
         e.preventDefault()
         pushHistory()
+        // a frame takes the text inside it along
+        const doomed = new Set(selection)
+        items.filter(isFrame).forEach((f) => {
+            if (!doomed.has(f.id)) return
+            items.filter(isText).forEach((t) => {
+                if (rectContains(f, t)) doomed.add(t.id)
+            })
+        })
         for (let i = items.length - 1; i >= 0; i--) {
-            if (selection.has(items[i].id)) items.splice(i, 1)
+            if (doomed.has(items[i].id)) items.splice(i, 1)
         }
         selection.clear()
         emit()

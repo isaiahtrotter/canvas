@@ -44,7 +44,8 @@ reference/               Original Framer components this was ported from
 - Frames show their name and a "last edited" timestamp above the top-left corner;
   hover the timestamp for the full date. `Shift+T` toggles timestamps (remembered)
 - Double-click the name to rename · drag corner handles to resize · W/H editable in the sidebar
-- Dragging a frame carries the text sitting inside it; deleting a frame leaves the text
+- Dragging a frame carries the text sitting inside it; deleting a frame deletes that text too
+- Moving or editing anything inside a frame bumps the frame's timestamp
 - Duplicating a frame keeps its timestamp; undoing an edit restores the pre-edit timestamp
 
 **Fill**

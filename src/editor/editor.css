@@ -42,7 +42,7 @@
   cursor:text;user-select:text;outline:none;color:#1c1c1c;
   box-shadow:0 0 0 1.5px var(--accent);background:#fff;
 }
-.ftime{color:#b0b0ae;font-weight:400;font-variant-numeric:tabular-nums;}
+.ftime{color:#b0b0ae;font-weight:400;font-variant-numeric:tabular-nums;position:relative;top:-1px;}
 .hide-times .ftime{display:none;}
 /* drawing a frame previews as a real (white) frame, not a selection */
 .frame-draft{
@@ -60,7 +60,7 @@
 }
 .minimap.on{opacity:1;transform:none;pointer-events:auto;}
 .mm-dot{
-  position:absolute;width:6px;height:6px;border-radius:50%;background:#1c1c1c;
+  position:absolute;width:4px;height:4px;border-radius:50%;background:#1c1c1c;
   transform:translate(-50%,-50%);
 }
 .mm-view{
