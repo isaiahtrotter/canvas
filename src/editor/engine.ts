@@ -309,7 +309,7 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
     const minimap = root.querySelector<HTMLElement>("#minimap")
     const MM_W = 140,
         MM_H = 90,
-        MM_PAD = 10
+        MM_PAD = 4
     let mmScale = 1,
         mmOx = 0,
         mmOy = 0 // world → minimap: (x - mmOx) * mmScale
@@ -373,7 +373,7 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
         const start = { x: e.clientX, y: e.clientY, vx: view.x, vy: view.y }
         const vp0 = viewportWorldRect()
         // keep an 8px gutter so the rectangle never touches the map's edge
-        const MM_GUTTER = 8
+        const MM_GUTTER = 4
         const maxX = MM_W - MM_GUTTER - vp0.w * mmScale,
             maxY = MM_H - MM_GUTTER - vp0.h * mmScale
         function mv(ev: PointerEvent) {
@@ -744,6 +744,15 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
             }
             box.appendChild(h)
         })
+        if (frame) {
+            // edge handles: drag any side to resize from that side alone
+            ;["t", "r", "b", "l"].forEach((edge) => {
+                const h = document.createElement("div")
+                h.className = "seledge " + edge
+                h.addEventListener("pointerdown", (e) => startResize(e, frame, edge))
+                box.appendChild(h)
+            })
+        }
         const size = document.createElement("div")
         size.className = "selsize"
         size.textContent = Math.round(b.w) + " × " + Math.round(b.h)
@@ -757,7 +766,7 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
         const o = { x: it.x, y: it.y, w: it.w, h: it.h }
         const pre = snapshot()
         let moved = false
-        const MIN_SIZE = 20
+        const MIN_SIZE = 1
         function mv(ev: PointerEvent) {
             const p = toWorld(ev.clientX, ev.clientY)
             const dx = p.x - start.x,
@@ -1771,7 +1780,7 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
             const frame = singleSelectedFrame()
             const v = parseFloat(input.value)
             if (!frame || isNaN(v)) return
-            const next = Math.max(20, Math.round(v))
+            const next = Math.max(1, Math.round(v))
             if (next === frame[key]) return
             consumePos()
             frame[key] = next

@@ -42,7 +42,7 @@
   cursor:text;user-select:text;outline:none;color:#1c1c1c;
   box-shadow:0 0 0 1.5px var(--accent);background:#fff;
 }
-.ftime{color:#b0b0ae;font-weight:400;font-variant-numeric:tabular-nums;position:relative;top:-1px;}
+.ftime{color:#b0b0ae;font-weight:400;font-variant-numeric:tabular-nums;position:relative;top:0;}
 .hide-times .ftime{display:none;}
 /* drawing a frame previews as a real (white) frame, not a selection */
 .frame-draft{
@@ -79,7 +79,7 @@
 .titem:hover, .titem.sel-underline{
   text-decoration:underline;
   text-decoration-color:#008FF0;
-  text-decoration-thickness:calc(1.5px * var(--inv));
+  text-decoration-thickness:calc(1px * var(--inv));
   text-underline-offset:0px;
   text-decoration-skip-ink:none;
 }
@@ -89,18 +89,24 @@
 
 /* Figma-style selection overlay */
 .selbox{
-  position:absolute;border:calc(1.5px * var(--inv)) solid var(--accent);pointer-events:none;z-index:8;
+  position:absolute;border:calc(1px * var(--inv)) solid var(--accent);pointer-events:none;z-index:8;
 }
 .selhandle{
-  position:absolute;width:9px;height:9px;background:#fff;border:1.5px solid var(--accent);
-  border-radius:1.5px;transform:scale(var(--inv));
+  position:absolute;width:7px;height:7px;background:#fff;border:1.5px solid var(--accent);
+  border-radius:1px;transform:scale(var(--inv));
 }
-.selhandle.tl{left:-5px;top:-5px;} .selhandle.tr{right:-5px;top:-5px;}
-.selhandle.bl{left:-5px;bottom:-5px;} .selhandle.br{right:-5px;bottom:-5px;}
+.selhandle.tl{left:-4px;top:-4px;} .selhandle.tr{right:-4px;top:-4px;}
+.selhandle.bl{left:-4px;bottom:-4px;} .selhandle.br{right:-4px;bottom:-4px;}
 /* a lone frame's handles are live */
 .selhandle.resizable{pointer-events:auto;}
 .selhandle.resizable.tl, .selhandle.resizable.br{cursor:nwse-resize;}
 .selhandle.resizable.tr, .selhandle.resizable.bl{cursor:nesw-resize;}
+/* edge handles: thin strips along each side, for resizing from just that side */
+.seledge{position:absolute;pointer-events:auto;}
+.seledge.t, .seledge.b{left:8px;right:8px;height:7px;cursor:ns-resize;}
+.seledge.l, .seledge.r{top:8px;bottom:8px;width:7px;cursor:ew-resize;}
+.seledge.t{top:-4px;} .seledge.b{bottom:-4px;}
+.seledge.l{left:-4px;} .seledge.r{right:-4px;}
 .selsize{
   position:absolute;top:calc(100% + 6px);left:50%;transform:translateX(-50%) scale(var(--inv));transform-origin:top center;
   background:var(--accent);color:#fff;font-size:10.5px;font-weight:500;

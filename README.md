@@ -43,7 +43,7 @@ reference/               Original Framer components this was ported from
 - With the frame tool, drag to draw a frame, or click to drop a 200×150 one
 - Frames show their name and a "last edited" timestamp above the top-left corner;
   hover the timestamp for the full date. `Shift+T` toggles timestamps (remembered)
-- Double-click the name to rename · drag corner handles to resize · W/H editable in the sidebar
+- Double-click the name to rename · drag any corner or edge handle to resize (down to 1×1) · W/H editable in the sidebar
 - Frames are selected and dragged by their title; clicking the body acts like empty canvas. Dragging a frame carries the text sitting inside it; deleting a frame deletes that text too
 - Moving or editing anything inside a frame bumps the frame's timestamp
 - Duplicating a frame keeps its timestamp; undoing an edit restores the pre-edit timestamp
