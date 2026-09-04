@@ -37,7 +37,7 @@
   transform:scale(var(--inv));transform-origin:left bottom;
 }
 .fname{color:#6e6e6e;font-weight:500;cursor:pointer;border-radius:2px;padding:1px 2px;margin:-1px -2px;}
-.frame:hover .fname, .frame.selected .fname{color:var(--accent);}
+.flabel:hover .fname, .frame.selected .fname{color:var(--accent);}
 .fname[contenteditable="true"]{
   cursor:text;user-select:text;outline:none;color:#1c1c1c;
   box-shadow:0 0 0 1.5px var(--accent);background:#fff;

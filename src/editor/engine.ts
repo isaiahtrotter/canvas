@@ -580,7 +580,8 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
         label.append(name, time)
         el.appendChild(label)
 
-        el.addEventListener("pointerdown", (e) => onItemPointerDown(e, it, el))
+        // a frame is grabbed by its title only; its body behaves like empty canvas
+        label.addEventListener("pointerdown", (e) => onItemPointerDown(e, it, el))
         name.addEventListener("dblclick", (e) => {
             e.stopPropagation()
             startRenaming(name, it)
@@ -977,7 +978,8 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
             startFrameDraw(e)
             return
         }
-        if (e.target !== canvas && e.target !== world) return
+        const t = e.target as HTMLElement
+        if (t !== canvas && t !== world && !t.classList.contains("frame")) return
         const rect = canvas.getBoundingClientRect()
         const s = toWorld(e.clientX, e.clientY)
         let marquee: HTMLDivElement | null = null,
