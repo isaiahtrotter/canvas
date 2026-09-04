@@ -316,9 +316,23 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
     function intersects(a, b) {
         return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y
     }
+    let mmDragging = false
+    function positionMmView(v: HTMLElement, vp) {
+        v.style.left = (vp.x - mmOx) * mmScale + "px"
+        v.style.top = (vp.y - mmOy) * mmScale + "px"
+        v.style.width = vp.w * mmScale + "px"
+        v.style.height = vp.h * mmScale + "px"
+    }
     function updateMinimap() {
         if (!minimap) return
         const vp = viewportWorldRect()
+        // while the viewport rectangle is being dragged the map stays put
+        // (no refit, no hide) — only the rectangle moves
+        if (mmDragging) {
+            const v = minimap.querySelector<HTMLElement>(".mm-view")
+            if (v) positionMmView(v, vp)
+            return
+        }
         const anyVisible = items.some((it) => {
             const { w, h } = nodeSize(it)
             return intersects({ x: it.x, y: it.y, w, h }, vp)
@@ -345,13 +359,45 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
         })
         const v = document.createElement("div")
         v.className = "mm-view"
-        v.style.left = (vp.x - mmOx) * mmScale + "px"
-        v.style.top = (vp.y - mmOy) * mmScale + "px"
-        v.style.width = vp.w * mmScale + "px"
-        v.style.height = vp.h * mmScale + "px"
+        positionMmView(v, vp)
+        v.addEventListener("pointerdown", startMmDrag)
         minimap.appendChild(v)
     }
+    // Drag the viewport rectangle to pan. It's clamped to the map's edges, so
+    // you can't drag the view out past what the minimap shows.
+    function startMmDrag(e: PointerEvent) {
+        e.stopPropagation()
+        e.preventDefault()
+        mmDragging = true
+        minimap.classList.add("dragging")
+        const start = { x: e.clientX, y: e.clientY, vx: view.x, vy: view.y }
+        const vp0 = viewportWorldRect()
+        const maxX = MM_W - vp0.w * mmScale,
+            maxY = MM_H - vp0.h * mmScale
+        function mv(ev: PointerEvent) {
+            // desired rect position in minimap px, clamped inside the map
+            let mx = (vp0.x - mmOx) * mmScale + (ev.clientX - start.x)
+            let my = (vp0.y - mmOy) * mmScale + (ev.clientY - start.y)
+            mx = Math.max(0, Math.min(maxX, mx))
+            my = Math.max(0, Math.min(maxY, my))
+            const wx = mx / mmScale + mmOx,
+                wy = my / mmScale + mmOy
+            view.x = -wx * view.z
+            view.y = -wy * view.z
+            applyView()
+        }
+        function up() {
+            document.removeEventListener("pointermove", mv)
+            document.removeEventListener("pointerup", up)
+            mmDragging = false
+            minimap.classList.remove("dragging")
+            updateMinimap() // refit (and possibly hide) now that the drag is over
+        }
+        document.addEventListener("pointermove", mv)
+        document.addEventListener("pointerup", up)
+    }
     minimap?.addEventListener("click", (e: MouseEvent) => {
+        if ((e.target as HTMLElement).classList.contains("mm-view")) return
         const r = minimap.getBoundingClientRect()
         const wx = (e.clientX - r.left) / mmScale + mmOx
         const wy = (e.clientY - r.top) / mmScale + mmOy

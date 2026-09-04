@@ -37,7 +37,7 @@ reference/               Original Framer components this was ported from
 - Hold Space and drag, or middle-mouse drag, to pan
 - `V` move tool · `F` frame tool · `Esc` back to move / clear selection
 - When nothing is on screen, a minimap fades in above the zoom pill: frames are dots, the
-  viewport is a rectangle; click it to jump
+  viewport is a rectangle you can drag (clamped to the map); click elsewhere to jump
 
 **Frames**
 - With the frame tool, drag to draw a frame, or click to drop a 200×150 one

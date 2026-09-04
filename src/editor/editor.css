@@ -65,8 +65,10 @@
 }
 .mm-view{
   position:absolute;border:1px solid var(--accent);background:rgba(12,140,233,.08);
-  border-radius:2px;box-sizing:border-box;
+  border-radius:2px;box-sizing:border-box;cursor:grab;
 }
+.mm-view:hover{background:rgba(12,140,233,.14);}
+.minimap.dragging, .minimap.dragging .mm-view{cursor:grabbing;}
 /* cursor:pointer is the CustomCursor hand trigger — it reads the computed
    cursor value, so anything draggable here gets the morphing hand for free */
 .titem{
