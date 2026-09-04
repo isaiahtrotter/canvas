@@ -1045,7 +1045,7 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
 
         function hits(r) {
             const out = new Set<number>()
-            items.forEach((it) => {
+            items.filter(isText).forEach((it) => {
                 const { w: iw, h: ih } = nodeSize(it)
                 if (
                     it.x < r.x + r.w &&
