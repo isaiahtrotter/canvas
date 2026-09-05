@@ -54,7 +54,8 @@ reference/               Original Framer components this was ported from
   every selected layer — frame backgrounds and text color — and one picker session is one undo step
 
 **Text**
-- Click / shift-click / marquee-drag to select layers; drag to move
+- Click / shift-click / marquee-drag to select text layers; drag to move. A marquee only picks up a
+  frame once it fully encloses it — partially overlapping one leaves it alone
 - Hold Option (Alt) while dragging to duplicate
 - Double-click to edit text · Enter commits · Esc commits and deselects
 - Delete / Backspace removes selected layers

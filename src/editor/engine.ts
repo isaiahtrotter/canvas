@@ -767,6 +767,12 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
         const pre = snapshot()
         let moved = false
         const MIN_SIZE = 1
+        // corners ("tl", "br", ...) touch both axes; an edge handle ("t",
+        // "r", ...) is a single letter and only ever touches its own axis —
+        // dragging the left/right edge must not also change height, and
+        // top/bottom must not also change width.
+        const affectsX = corner.includes("l") || corner.includes("r")
+        const affectsY = corner.includes("t") || corner.includes("b")
         function mv(ev: PointerEvent) {
             const p = toWorld(ev.clientX, ev.clientY)
             const dx = p.x - start.x,
@@ -780,14 +786,18 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
                 y = o.y,
                 w = o.w,
                 h = o.h
-            if (corner.includes("l")) {
-                x = Math.min(o.x + dx, o.x + o.w - MIN_SIZE)
-                w = o.x + o.w - x
-            } else w = Math.max(MIN_SIZE, o.w + dx)
-            if (corner.includes("t")) {
-                y = Math.min(o.y + dy, o.y + o.h - MIN_SIZE)
-                h = o.y + o.h - y
-            } else h = Math.max(MIN_SIZE, o.h + dy)
+            if (affectsX) {
+                if (corner.includes("l")) {
+                    x = Math.min(o.x + dx, o.x + o.w - MIN_SIZE)
+                    w = o.x + o.w - x
+                } else w = Math.max(MIN_SIZE, o.w + dx)
+            }
+            if (affectsY) {
+                if (corner.includes("t")) {
+                    y = Math.min(o.y + dy, o.y + o.h - MIN_SIZE)
+                    h = o.y + o.h - y
+                } else h = Math.max(MIN_SIZE, o.h + dy)
+            }
             it.x = Math.round(x)
             it.y = Math.round(y)
             it.w = Math.round(w)
@@ -1045,9 +1055,18 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
 
         function hits(r) {
             const out = new Set<number>()
-            items.filter(isText).forEach((it) => {
+            items.forEach((it) => {
                 const { w: iw, h: ih } = nodeSize(it)
-                if (
+                if (isFrame(it)) {
+                    // a frame is only swept up once the marquee fully covers it
+                    if (
+                        it.x >= r.x &&
+                        it.y >= r.y &&
+                        it.x + iw <= r.x + r.w &&
+                        it.y + ih <= r.y + r.h
+                    )
+                        out.add(it.id)
+                } else if (
                     it.x < r.x + r.w &&
                     it.x + iw > r.x &&
                     it.y < r.y + r.h &&
