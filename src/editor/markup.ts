@@ -25,6 +25,8 @@ export const MARKUP = `
       </div>
       <div class="toast" id="toast" role="status"></div>
     </div>
+    <div class="resizer left" id="resizeLeft" title="Drag to resize"></div>
+    <div class="resizer right" id="resizeRight" title="Drag to resize"></div>
     <div class="settings" id="settings">
       <div class="settings-dialog" role="dialog" aria-modal="true" aria-label="Settings">
         <nav class="settings-nav">

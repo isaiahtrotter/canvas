@@ -95,7 +95,7 @@ export function Editor({ cornerRadius = 0 }: EditorProps) {
                     ref={pickerRef}
                     style={{
                         position: "absolute",
-                        right: 238, // sits just left of the 230px sidebar
+                        right: "calc(var(--right-w, 230px) + 8px)", // just left of the (resizable) sidebar
                         top: Math.max(8, Math.min(picker.top, (wrapRef.current?.clientHeight ?? 600) - 520)),
                         zIndex: 40,
                         fontFamily: "'Inter', system-ui, sans-serif",

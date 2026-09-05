@@ -444,6 +444,7 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
     const MM_H = 72,
         MM_PAD = 4
     const zoomPill = root.querySelector<HTMLElement>(".zoompill")
+    const PILL_GAP = 12 // the zoom pill's distance from the canvas edge; the minimap sits the same distance above it
     function syncMinimapWidth() {
         if (!zoomPill || !minimap) return
         const w = zoomPill.offsetWidth - 2 // the map is content-box with a 1px border
@@ -451,6 +452,7 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
             MM_W = w
             minimap.style.width = MM_W + "px"
         }
+        minimap.style.bottom = PILL_GAP + zoomPill.offsetHeight + PILL_GAP + "px"
     }
     let mmScale = 1,
         mmOx = 0,
@@ -3217,13 +3219,27 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
     /* ================= preferences, theme, settings ================= */
     type Theme = "light" | "dark" | "system"
     const PREFS_KEY = "canvas.prefs.v1"
-    const prefs: { theme: Theme; name: string; grid: boolean; leftPanel: boolean; rightPanel: boolean } = {
+    // sidebar widths: each drags between its default and a cap
+    const LEFT_W = { min: 200, max: 450 },
+        RIGHT_W = { min: 230, max: 350 }
+    const prefs: {
+        theme: Theme
+        name: string
+        grid: boolean
+        leftPanel: boolean
+        rightPanel: boolean
+        leftWidth: number
+        rightWidth: number
+    } = {
         theme: "system",
         name: "",
         grid: true,
         leftPanel: true,
         rightPanel: true,
+        leftWidth: LEFT_W.min,
+        rightWidth: RIGHT_W.min,
     }
+    const clampW = (v: number, r: { min: number; max: number }) => Math.round(Math.max(r.min, Math.min(r.max, v)))
     try {
         const raw = localStorage.getItem(PREFS_KEY)
         if (raw) {
@@ -3233,6 +3249,8 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
             if (typeof p.grid === "boolean") prefs.grid = p.grid
             if (typeof p.leftPanel === "boolean") prefs.leftPanel = p.leftPanel
             if (typeof p.rightPanel === "boolean") prefs.rightPanel = p.rightPanel
+            if (typeof p.leftWidth === "number") prefs.leftWidth = clampW(p.leftWidth, LEFT_W)
+            if (typeof p.rightWidth === "number") prefs.rightWidth = clampW(p.rightWidth, RIGHT_W)
         }
     } catch (_) {
         /* defaults */
@@ -3352,11 +3370,50 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
 
     /* ---- sidebars: each hides from its own header button and comes back
        from a floating button at that edge of the canvas; ⌘\ toggles both ---- */
+    // widths go on the mount's parent so the host's color picker (a sibling
+    // of the engine root, anchored to the right sidebar) can read them too
+    const varHost = root.parentElement ?? root
     function applyPanels() {
         app.classList.toggle("left-hidden", !prefs.leftPanel)
         app.classList.toggle("right-hidden", !prefs.rightPanel)
+        varHost.style.setProperty("--left-w", prefs.leftWidth + "px")
+        varHost.style.setProperty("--right-w", prefs.rightWidth + "px")
         // the canvas just changed size; its ResizeObserver redraws the chrome
     }
+    /* drag a sidebar's inner edge to resize it; the width persists with prefs */
+    function wireResizer(el: HTMLElement | null, side: "leftWidth" | "rightWidth") {
+        if (!el) return
+        el.addEventListener("pointerdown", (e: PointerEvent) => {
+            if (e.button !== 0) return
+            e.preventDefault()
+            e.stopPropagation()
+            const startX = e.clientX
+            const startW = prefs[side]
+            const range = side === "leftWidth" ? LEFT_W : RIGHT_W
+            el.classList.add("active")
+            app.classList.add("resizing")
+            const mv = (ev: PointerEvent) => {
+                // the left sidebar grows as the pointer moves right; the right one as it moves left
+                const dx = side === "leftWidth" ? ev.clientX - startX : startX - ev.clientX
+                const w = clampW(startW + dx, range)
+                if (w !== prefs[side]) {
+                    prefs[side] = w
+                    applyPanels()
+                }
+            }
+            const up = () => {
+                document.removeEventListener("pointermove", mv)
+                document.removeEventListener("pointerup", up)
+                el.classList.remove("active")
+                app.classList.remove("resizing")
+                savePrefs()
+            }
+            document.addEventListener("pointermove", mv)
+            document.addEventListener("pointerup", up)
+        })
+    }
+    wireResizer(root.querySelector<HTMLElement>("#resizeLeft"), "leftWidth")
+    wireResizer(root.querySelector<HTMLElement>("#resizeRight"), "rightWidth")
     function setPanel(side: "leftPanel" | "rightPanel", on: boolean) {
         if (prefs[side] === on) return
         prefs[side] = on
