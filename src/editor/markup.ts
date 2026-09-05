@@ -1,7 +1,11 @@
 export const MARKUP = `
 <div class="app">
+    <div class="layerspanel" aria-label="Layers">
+      <div class="sp-label">Layers</div>
+      <div class="layerlist" id="layerList"></div>
+    </div>
     <div class="canvas-wrap">
-      <div class="canvas" id="canvas"><div class="world" id="world"></div><div class="overlay" id="overlay"></div></div>
+      <div class="canvas" id="canvas"><div class="world" id="world"></div><div class="overlay" id="overlay"><div class="grid" id="grid"></div></div></div>
       <div class="toolpill" role="toolbar" aria-label="Tools">
         <button data-tool="move" class="active" title="Move (V)" aria-label="Move tool" tabindex="-1">
           <svg width="14" height="14" viewBox="0 0 14 14" fill="currentColor"><path d="M3.2 1.8l8.6 6.3-3.9.6 2.2 4-1.7.9-2.2-4-2.9 2.6z"/></svg>

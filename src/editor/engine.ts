@@ -14,6 +14,8 @@ interface TextItem {
     size: number
     font: string
     weight: number
+    lineHeight?: number // unitless multiplier; default 1.2
+    letterSpacing?: number // px; default 0
     opacity?: number
     fill: string // hex
     alpha: number // 0–100
@@ -72,10 +74,16 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
 
     /* ================= ported app ================= */
 
+    // MIN..MAX is the range the size slider shows; the size itself has no
+    // upper limit (type any value into the field) and a floor of SIZE_MIN
     const MIN = 8,
         MAX = 48,
         STEP = 4,
         INSET = 12
+    const SIZE_MIN = 1
+    const DEFAULT_LINE_HEIGHT = 1.2
+    const lineHeightOf = (it: TextItem) => it.lineHeight ?? DEFAULT_LINE_HEIGHT
+    const letterSpacingOf = (it: TextItem) => it.letterSpacing ?? 0
     const PALETTE = [
         "#008FF0",
         "#F24822",
@@ -131,7 +139,7 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
     let carryingFrameDrag = false // true only while a frame-drag's own emit() is diffing
     const lastText = new Map<number, { sig: string; x: number; y: number }>()
     function textSig(it: TextItem) {
-        return [it.x, it.y, it.text, it.size, it.font, it.weight, it.fill, it.alpha].join("|")
+        return [it.x, it.y, it.text, it.size, it.font, it.weight, it.fill, it.alpha, lineHeightOf(it), letterSpacingOf(it)].join("|")
     }
     function touchParentFrames() {
         const now = Date.now()
@@ -333,13 +341,26 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
        translate(x,y) scale(z). --inv is 1/z so chrome that should stay a
        constant size on screen (frame labels, handles) can counter-scale. ---- */
     const ZOOM_MIN = 0.1,
-        ZOOM_MAX = 4
+        ZOOM_MAX = 20 // 2000%
+    const GRID_FROM = 10 // the pixel grid appears from 1000%
     const view = { x: 0, y: 0, z: 1 }
     const zoomVal = root.querySelector<HTMLElement>("#zoomVal")
+    const grid = root.querySelector<HTMLElement>("#grid")
+    function applyGrid() {
+        if (!grid) return
+        const on = view.z >= GRID_FROM
+        grid.classList.toggle("on", on)
+        if (!on) return
+        // one cell per world unit, anchored to the world origin so lines sit
+        // exactly on integer coordinates
+        grid.style.backgroundSize = `${view.z}px ${view.z}px`
+        grid.style.backgroundPosition = `${view.x}px ${view.y}px`
+    }
     function applyView() {
         world.style.transform = `translate(${view.x}px, ${view.y}px) scale(${view.z})`
         world.style.setProperty("--inv", String(1 / view.z))
         if (zoomVal) zoomVal.textContent = Math.round(view.z * 100) + "%"
+        applyGrid()
         updateMinimap()
         // screen-space chrome has to follow the view
         renderSelectionOverlay()
@@ -789,6 +810,8 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
             el.style.fontSize = it.size + "px"
             el.style.fontFamily = it.font
             el.style.fontWeight = String(it.weight)
+            el.style.lineHeight = String(lineHeightOf(it))
+            el.style.letterSpacing = letterSpacingOf(it) + "px"
             el.style.opacity = String((it.opacity != null ? it.opacity : 100) / 100)
             el.style.color = rgbaCss(it.fill, it.alpha)
             el.textContent = it.text
@@ -806,8 +829,126 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
             world.appendChild(el)
         })
         applyWash()
+        applyClips()
         renderSelectionOverlay()
         updateMinimap()
+        renderLayers()
+    }
+
+    /* Text belongs to a frame by where it starts (its top-left origin), like
+       dropping it into the frame — so a line that runs past the frame's edge
+       still belongs to it, and the part poking out is clipped. Frames nest
+       only when fully contained. */
+    function frameHolds(f: FrameItem, it: Item) {
+        if (f.id === it.id) return false
+        if (isFrame(it)) return rectContains(f, it)
+        return it.x >= f.x && it.y >= f.y && it.x < f.x + f.w && it.y < f.y + f.h
+    }
+    // clip every text layer to the frame it belongs to; text being edited is
+    // left unclipped so the caret and what's typed stay visible
+    function applyClips() {
+        items.filter(isText).forEach((it) => {
+            const node = canvas.querySelector<HTMLElement>('[data-id="' + it.id + '"]')
+            if (!node) return
+            const f = node === editingEl ? null : containingFrame(it)
+            if (!f) {
+                node.style.clipPath = ""
+                return
+            }
+            const { w, h } = nodeSize(it)
+            const top = Math.max(0, f.y - it.y),
+                left = Math.max(0, f.x - it.x),
+                right = Math.max(0, it.x + w - (f.x + f.w)),
+                bottom = Math.max(0, it.y + h - (f.y + f.h))
+            node.style.clipPath =
+                top || left || right || bottom ? `inset(${top}px ${right}px ${bottom}px ${left}px)` : ""
+        })
+    }
+
+    /* ---- layers panel: top-most first. Loose text sits above every frame;
+       each frame lists the text it holds beneath it. ---- */
+    const layerList = root.querySelector<HTMLElement>("#layerList")
+    const TEXT_ICON =
+        '<svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor"><path d="M1.5 1.5h9v2.2H9.3V3H6.9v7h1.3v1.5H3.8V10h1.3V3H2.7v.7H1.5z"/></svg>'
+    const FRAME_ICON =
+        '<svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"><path d="M3.8 1v10M8.2 1v10M1 3.8h10M1 8.2h10"/></svg>'
+    function layerRow(it: Item, child: boolean) {
+        const row = document.createElement("div")
+        row.className =
+            "layerrow " + (isFrame(it) ? "frame" : "text") + (child ? " child" : "") + (selection.has(it.id) ? " selected" : "")
+        row.dataset.id = String(it.id)
+        row.innerHTML = isFrame(it) ? FRAME_ICON : TEXT_ICON
+        const name = document.createElement("span")
+        name.className = "lname"
+        name.textContent = isFrame(it) ? it.name : it.text
+        row.appendChild(name)
+        row.addEventListener("click", (e) => {
+            if (name.getAttribute("contenteditable") === "true") return
+            if (e.shiftKey) {
+                if (selection.has(it.id)) selection.delete(it.id)
+                else selection.add(it.id)
+            } else {
+                selection.clear()
+                selection.add(it.id)
+            }
+            emit()
+        })
+        // hovering a text row underlines it on the canvas, like hovering the text itself
+        row.addEventListener("mouseenter", () => {
+            const node = canvas.querySelector<HTMLElement>('[data-id="' + it.id + '"]')
+            if (isText(it) && node) {
+                lastHover = node
+                renderUnderlines()
+            }
+        })
+        row.addEventListener("mouseleave", () => {
+            if (lastHover && lastHover.dataset.id === String(it.id)) {
+                lastHover = null
+                renderUnderlines()
+            }
+        })
+        if (isFrame(it))
+            name.addEventListener("dblclick", (e) => {
+                e.stopPropagation()
+                startRenaming(name, it)
+            })
+        return row
+    }
+    function renderLayers() {
+        if (!layerList) return
+        layerList.innerHTML = ""
+        if (!items.length) {
+            const empty = document.createElement("div")
+            empty.className = "empty"
+            empty.textContent = "No layers yet"
+            layerList.appendChild(empty)
+            return
+        }
+        const frames = items.filter(isFrame)
+        const texts = items.filter(isText)
+        const held = new Set<number>()
+        const byFrame = new Map<number, TextItem[]>()
+        texts.forEach((t) => {
+            const f = containingFrame(t)
+            if (!f) return
+            held.add(t.id)
+            if (!byFrame.has(f.id)) byFrame.set(f.id, [])
+            byFrame.get(f.id).push(t)
+        })
+        texts
+            .filter((t) => !held.has(t.id))
+            .reverse()
+            .forEach((t) => layerList.appendChild(layerRow(t, false)))
+        frames
+            .slice()
+            .reverse()
+            .forEach((f) => {
+                layerList.appendChild(layerRow(f, false))
+                ;(byFrame.get(f.id) ?? [])
+                    .slice()
+                    .reverse()
+                    .forEach((t) => layerList.appendChild(layerRow(t, true)))
+            })
     }
 
     function renderFrame(it: FrameItem) {
@@ -918,11 +1059,11 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
             it.y + h <= f.y + f.h
         )
     }
-    // smallest frame fully containing the item, if any
+    // smallest frame holding the item (see frameHolds), if any
     function containingFrame(it: Item): FrameItem | null {
         let best: FrameItem | null = null
         items.filter(isFrame).forEach((f) => {
-            if (f.id === it.id || !rectContains(f, it)) return
+            if (!frameHolds(f, it)) return
             if (!best || f.w * f.h < best.w * best.h) best = f
         })
         return best
@@ -942,8 +1083,10 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
             const node = canvas.querySelector<HTMLElement>('[data-id="' + it.id + '"]')
             if (!node || node === editingEl) return
             if (!(node.classList.contains("sel-underline") || node === lastHover)) return
-            const { w, h } = nodeSize(it)
+            let { w, h } = nodeSize(it)
             if (!w) return
+            const f = containingFrame(it)
+            if (f) w = Math.max(0, Math.min(w, f.x + f.w - it.x)) // the clipped part has no underline
             const y = it.y + h - it.size * 0.22
             const a = toScreen(it.x, y)
             const u = document.createElement("div")
@@ -1047,6 +1190,7 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
                 node.style.width = it.w + "px"
                 node.style.height = it.h + "px"
             }
+            applyClips()
             renderSelectionOverlay()
             updateProps()
         }
@@ -1072,6 +1216,7 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
 
     function startEditing(el, it) {
         editingEl = el
+        el.style.clipPath = "" // see everything while typing; clipped again on commit
         renderSelectionOverlay()
         const preEdit = snapshot()
         el.setAttribute("contenteditable", "true")
@@ -1168,7 +1313,7 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
             .filter(isFrame)
             .forEach((f) => {
                 items.filter(isText).forEach((t) => {
-                    if (carried.has(t.id) || !rectContains(f, t)) return
+                    if (carried.has(t.id) || !frameHolds(f, t)) return
                     carried.add(t.id)
                     starts.push({ it: t, x: t.x, y: t.y })
                 })
@@ -1213,6 +1358,7 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
                     node.style.top = i2.y + "px"
                 }
             })
+            applyClips()
             renderSelectionOverlay()
             updateProps() // X/Y readouts follow the drag in real time
         }
@@ -1469,7 +1615,7 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
         items.filter(isFrame).forEach((f) => {
             if (!doomed.has(f.id)) return
             items.filter(isText).forEach((t) => {
-                if (rectContains(f, t)) doomed.add(t.id)
+                if (frameHolds(f, t)) doomed.add(t.id)
             })
         })
         for (let i = items.length - 1; i >= 0; i--) {
@@ -1528,6 +1674,7 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
             return Math.max(1, track.clientWidth - INSET * 2)
         }
         function vToPx(v) {
+            v = Math.max(MIN, Math.min(MAX, v)) // a size past the slider's range parks its handle at the end
             return INSET + ((v - MIN) / (MAX - MIN)) * cw()
         }
         function pxToV(px) {
@@ -1936,11 +2083,23 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
          pale   — light grays once the background is dark enough that the
                   dark palette would give less contrast than a light one */
     const LABEL_PALETTES = {
-        light: { name: "#6e6e6e", time: "#b0b0ae" },
-        dark: { name: "#1c1c1c", time: "#5a5a5a" },
-        pale: { name: "#f4f4f4", time: "#a8a8a8" },
+        light: { name: "#6e6e6e", time: "#b0b0ae", grid: "rgba(0,0,0,.09)" },
+        dark: { name: "#1c1c1c", time: "#5a5a5a", grid: "rgba(0,0,0,.11)" },
+        pale: { name: "#f4f4f4", time: "#a8a8a8", grid: "rgba(255,255,255,.13)" },
     }
     const MIN_TIME_CONTRAST = 1.6 // the default timestamp on #ededed is ~1.85
+    /* The selection blue (frame name when selected/hovered, selection box,
+       handles, underlines, marquee) gets the same treatment: the brand accent
+       stays until the background gets close to it, then a darker or a paler
+       blue takes over — whichever reads better. Set as --accent on #canvas,
+       so only canvas chrome changes; the panels keep the brand color. */
+    const ACCENTS = { base: "#0c8ce9", dark: "#0b4f8f", pale: "#a6d4ff" }
+    const MIN_ACCENT_CONTRAST = 2
+    function accentColor(seen: [number, number, number]) {
+        const contrast = (hex: string) => contrastRatio(hexToRgb(hex), seen)
+        if (contrast(ACCENTS.base) >= MIN_ACCENT_CONTRAST) return ACCENTS.base
+        return contrast(ACCENTS.dark) >= contrast(ACCENTS.pale) ? ACCENTS.dark : ACCENTS.pale
+    }
     function labelPalette() {
         const seen = compositeOver(hexToRgb(bg.hex), bg.alpha, [255, 255, 255]) // canvas sits on the white app
         const timeContrast = (p: { time: string }) => contrastRatio(hexToRgb(p.time), seen)
@@ -1959,6 +2118,9 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
         const p = labelPalette()
         canvas.style.setProperty("--fname", p.name)
         canvas.style.setProperty("--ftime", p.time)
+        canvas.style.setProperty("--grid", p.grid)
+        const seen = compositeOver(hexToRgb(bg.hex), bg.alpha, [255, 255, 255])
+        canvas.style.setProperty("--accent", accentColor(seen))
     }
     // shared fill of the selection, or null when empty / mixed
     function selectionFill(): { fill: Fill | null; mixed: boolean } {
@@ -2139,7 +2301,7 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
         const inside = new Set<number>()
         frames.forEach((f) =>
             items.forEach((it) => {
-                if (it.id !== f.id && rectContains(f, it)) inside.add(it.id)
+                if (frameHolds(f, it)) inside.add(it.id)
             })
         )
         selection.clear()
@@ -2159,7 +2321,7 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
             .filter(isFrame)
             .forEach((f) =>
                 items.filter(isText).forEach((t) => {
-                    if (rectContains(f, t)) moving.set(t.id, t)
+                    if (frameHolds(f, t)) moving.set(t.id, t)
                 })
             )
         if (!moving.size) return
@@ -2285,8 +2447,9 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
             selectedTextItems().forEach((it) => (it.size = v))
             emit()
         },
+        // typed sizes (field, pills, +/-) have no ceiling — only slider drags are bounded
         setAll(v) {
-            v = Math.max(MIN, Math.min(MAX, Math.round(v)))
+            v = Math.max(SIZE_MIN, Math.round(v))
             if (selectedTextItems().every((it) => it.size === v)) return
             this._consumeOrPush()
             selectedTextItems().forEach((it) => (it.size = v))
@@ -2294,10 +2457,7 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
         },
         nudge(s) {
             this._consumeOrPush()
-            selectedTextItems().forEach(
-                (it) =>
-                    (it.size = Math.max(MIN, Math.min(MAX, it.size + s)))
-            )
+            selectedTextItems().forEach((it) => (it.size = Math.max(SIZE_MIN, it.size + s)))
             emit()
         },
     }
@@ -2330,16 +2490,140 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
 
         const row = document.createElement("div")
         row.className = "proprow"
-        const weightDD = makeSelect([
-            { label: "Light", value: 300 },
-            { label: "Regular", value: 400 },
-            { label: "Medium", value: 500 },
-            { label: "Semibold", value: 600 },
-            { label: "Bold", value: 700 },
-        ])
+        const weightDD = makeSelect(
+            [
+                { label: "Light", value: 300 },
+                { label: "Regular", value: 400 },
+                { label: "Medium", value: 500 },
+                { label: "Semibold", value: 600 },
+                { label: "Bold", value: 700 },
+            ],
+            (v) => {
+                const weight = Number(v)
+                const sel = selectedTextItems()
+                if (!sel.length || sel.every((it) => it.weight === weight)) return
+                pushHistory()
+                sel.forEach((it) => (it.weight = weight))
+                emit()
+            }
+        )
         weightDD.classList.add("grow")
-        weightDD.querySelector<HTMLSelectElement>("select").value = "400"
-        weightDD.querySelector<HTMLSelectElement>("select").disabled = true
+        const weightSel = weightDD.querySelector<HTMLSelectElement>("select")
+        const mixedWeight = document.createElement("option")
+        mixedWeight.value = "__mixed"
+        mixedWeight.textContent = "Mixed"
+        mixedWeight.disabled = true
+        mixedWeight.hidden = true
+        weightSel.appendChild(mixedWeight)
+        function updateWeightDD() {
+            const sel = selectedTextItems()
+            weightSel.disabled = !sel.length
+            if (!sel.length) {
+                weightSel.value = "400"
+                return
+            }
+            const same = sel.every((it) => it.weight === sel[0].weight)
+            weightSel.value = same ? String(sel[0].weight) : "__mixed"
+        }
+
+        /* line height (unitless, e.g. 1.2) and letter spacing (px). Each field
+           applies live as you type; a typing session is one undo step. */
+        const spacingRow = document.createElement("div")
+        spacingRow.className = "proprow"
+        function numField(
+            key: string,
+            label: string,
+            read: (it: TextItem) => number,
+            write: (it: TextItem, v: number) => void,
+            step: number,
+            decimals: number
+        ) {
+            const pi = document.createElement("div")
+            pi.className = "pi"
+            const k = document.createElement("span")
+            k.className = "pi-key"
+            k.textContent = key
+            const input = document.createElement("input")
+            input.setAttribute("inputmode", "decimal")
+            input.setAttribute("aria-label", label)
+            input.title = label
+            pi.append(k, input)
+            let pre = null
+            const fmt = (v: number) => String(Number(v.toFixed(decimals)))
+            function apply(v: number) {
+                const sel = selectedTextItems()
+                if (!sel.length || sel.every((it) => read(it) === v)) return
+                if (pre) {
+                    pushHistory(pre)
+                    pre = null
+                }
+                sel.forEach((it) => write(it, v))
+                emit()
+            }
+            function update(force?: boolean) {
+                const sel = selectedTextItems()
+                input.disabled = !sel.length
+                if (!sel.length) {
+                    input.value = ""
+                    input.placeholder = "\u2013"
+                    return
+                }
+                if (document.activeElement === input && !force) return
+                const vals = sel.map(read)
+                const same = vals.every((v) => v === vals[0])
+                input.value = same ? fmt(vals[0]) : ""
+                input.placeholder = same ? "" : "Mixed"
+            }
+            input.addEventListener("focus", () => {
+                pre = snapshot()
+                input.select()
+            })
+            input.addEventListener("input", () => {
+                const v = parseFloat(input.value)
+                if (!isNaN(v)) apply(Number(v.toFixed(decimals)))
+            })
+            input.addEventListener("keydown", (e) => {
+                if (e.key === "Enter") {
+                    input.blur()
+                    return
+                }
+                if (e.key === "ArrowUp" || e.key === "ArrowDown") {
+                    e.preventDefault()
+                    const sel = selectedTextItems()
+                    if (!sel.length) return
+                    const dir = e.key === "ArrowUp" ? 1 : -1
+                    const s = step * (e.shiftKey ? 10 : 1)
+                    if (!pre) pre = snapshot()
+                    pushHistory(pre)
+                    pre = null
+                    sel.forEach((it) => write(it, Number((read(it) + dir * s).toFixed(decimals))))
+                    emit()
+                    update(true)
+                }
+            })
+            input.addEventListener("blur", () => {
+                pre = null
+                update(true)
+            })
+            return { el: pi, update }
+        }
+        const lineHeightField = numField(
+            "LH",
+            "Line height",
+            lineHeightOf,
+            (it, v) => (it.lineHeight = Math.max(0, v)),
+            0.1,
+            2
+        )
+        const letterSpacingField = numField(
+            "LS",
+            "Letter spacing (px)",
+            letterSpacingOf,
+            (it, v) => (it.letterSpacing = v),
+            0.5,
+            2
+        )
+        spacingRow.append(lineHeightField.el, letterSpacingField.el)
 
         const sizewrap = document.createElement("div")
         sizewrap.className = "sizewrap"
@@ -2390,6 +2674,9 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
 
         function updateField(force?: boolean) {
             updateFontDD()
+            updateWeightDD()
+            lineHeightField.update(force)
+            letterSpacingField.update(force)
             const sel = selectedTextItems()
             if (sel.length === 0) {
                 input.value = ""
@@ -2486,7 +2773,7 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
                 setOpen(false)
         })
 
-        panelGroup.append(fontDD, row, drawer)
+        panelGroup.append(fontDD, row, drawer, spacingRow)
         mountWidget()
         updateField()
         setOpen(true)
