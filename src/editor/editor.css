@@ -86,16 +86,17 @@
   padding:2px 0;border-radius:2px;color:#1c1c1c;
 }
 .titem.dragging{cursor:pointer;}
-.titem:hover, .titem.sel-underline{
-  text-decoration:underline;
-  text-decoration-color:#008FF0;
-  text-decoration-thickness:calc(1px * var(--inv));
-  text-underline-offset:0px;
-  text-decoration-skip-ink:none;
+/* hover / multi-select underlines are drawn in the #overlay (.tunder), not
+   as text-decoration, so they stay a crisp 1px at any zoom */
+.tunder{position:absolute;height:1px;background:#008FF0;pointer-events:none;z-index:8;}
+/* cursor:text while editing → CustomCursor swaps to the text beam. The
+   1px border comes from the overlay (.selbox.editing); the fill covers
+   the whole text box. */
+.titem[contenteditable="true"]{
+  cursor:text;user-select:text;outline:none;
+  background:rgba(12,140,233,.12);
 }
-.titem[contenteditable="true"]{text-decoration:none;}
-/* cursor:text while editing → CustomCursor swaps to the text beam */
-.titem[contenteditable="true"]{cursor:text;user-select:text;box-shadow:0 0 0 1.5px var(--accent);}
+.titem[contenteditable="true"]::selection{background:rgba(12,140,233,.22);}
 
 /* Figma-style selection overlay */
 .selbox{
@@ -130,7 +131,8 @@
 }
 
 /* Option/Alt distance measurement: a line per axis plus a small pill label */
-.measure{position:absolute;left:0;top:0;pointer-events:none;z-index:12;}
+/* below .selbox (8) so a guide never crosses over the blue size badge */
+.measure{position:absolute;left:0;top:0;pointer-events:none;z-index:7;}
 .measure-line{position:absolute;background:#f24822;pointer-events:none;}
 .measure-label{
   position:absolute;transform:translate(-50%,-50%);

@@ -632,7 +632,11 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
     canvas.addEventListener("pointermove", (e: PointerEvent) => {
         // remember what's under the pointer even without Alt, so pressing Alt
         // with a still mouse can show the measurement right away
-        lastHover = (e.target as HTMLElement).closest<HTMLElement>(".titem, .frame")
+        const nowHover = (e.target as HTMLElement).closest<HTMLElement>(".titem, .frame")
+        if (nowHover !== lastHover) {
+            lastHover = nowHover
+            renderUnderlines()
+        }
         // e.buttons !== 0 means some other gesture (drag, resize, pan...) owns
         // this move — Alt already means "duplicate" mid-drag, so stay out of the way
         if (!altDown || e.buttons !== 0) {
@@ -643,6 +647,7 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
     })
     canvas.addEventListener("pointerleave", () => {
         lastHover = null
+        renderUnderlines()
         clearMeasure()
     })
 
@@ -881,9 +886,41 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
         return sel.length === 1 && isFrame(sel[0]) ? sel[0] : null
     }
 
+    // Text underlines (hover, multi-select, marquee touch) are drawn here as
+    // 1px screen-space lines rather than text-decoration inside the scaled
+    // world, so they stay crisp at any zoom. Sits at the glyph baseline —
+    // approximated as 0.22em above the line box's bottom.
+    function renderUnderlines() {
+        overlay.querySelectorAll<HTMLElement>(".tunder").forEach((n) => n.remove())
+        items.filter(isText).forEach((it) => {
+            const node = canvas.querySelector<HTMLElement>('[data-id="' + it.id + '"]')
+            if (!node || node === editingEl) return
+            if (!(node.classList.contains("sel-underline") || node === lastHover)) return
+            const { w, h } = nodeSize(it)
+            if (!w) return
+            const y = it.y + h - 2 - it.size * 0.22 // 2 = the text box's bottom padding
+            const a = toScreen(it.x, y)
+            const u = document.createElement("div")
+            u.className = "tunder"
+            u.style.left = a.x + "px"
+            u.style.top = a.y + "px"
+            u.style.width = w * view.z + "px"
+            overlay.appendChild(u)
+        })
+    }
     function renderSelectionOverlay() {
         canvas.querySelectorAll<HTMLElement>(".selbox").forEach((n) => n.remove())
-        if (editingEl) return
+        renderUnderlines()
+        if (editingEl) {
+            // while typing: the same 1px box, sized to the live text, no handles
+            const it = items.find((i) => i.id === Number(editingEl.dataset.id))
+            if (!it) return
+            const box = document.createElement("div")
+            box.className = "selbox editing"
+            placeScreenRect(box, itemBounds(it))
+            overlay.appendChild(box)
+            return
+        }
         const b = selectionBounds() // one combined box around everything selected
         if (!b) return
         const box = document.createElement("div")
@@ -994,7 +1031,10 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
         el.setAttribute("contenteditable", "true")
         el.focus()
         selectAllText(el)
+        const onInput = () => renderSelectionOverlay()
+        el.addEventListener("input", onInput)
         function done() {
+            el.removeEventListener("input", onInput)
             el.removeAttribute("contenteditable")
             const newText = el.textContent.trim() || "Text"
             if (newText !== it.text) pushHistory(preEdit)
@@ -1278,6 +1318,7 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
                 const node = canvas.querySelector<HTMLElement>('[data-id="' + it.id + '"]')
                 if (node) node.classList.toggle("sel-underline", touched.has(it.id))
             })
+            renderUnderlines()
         }
         function up() {
             document.removeEventListener("pointermove", mv)
