@@ -1388,11 +1388,13 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
     /* keyboard: tools, zoom, timestamps, delete */
     onDoc("keydown", (e) => {
         const a = document.activeElement as HTMLElement | null
+        // an active text edit counts as typing even if focus is elsewhere
         const typing =
-            a &&
-            (a.tagName === "INPUT" ||
-                a.tagName === "SELECT" ||
-                a.isContentEditable)
+            !!editingEl ||
+            (a &&
+                (a.tagName === "INPUT" ||
+                    a.tagName === "SELECT" ||
+                    a.isContentEditable))
         if (e.code === "Space" && !typing) {
             if (!spaceDown) setSpaceDown(true)
             e.preventDefault()
@@ -1416,6 +1418,13 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
         if (mod && e.key === "0") {
             e.preventDefault()
             resetView()
+            return
+        }
+        if (mod && (e.key === "a" || e.key === "A")) {
+            // editing text (or in a sidebar field): the browser's own select-all
+            if (typing) return
+            e.preventDefault()
+            selectAll()
             return
         }
         if (typing || mod) return
@@ -2089,6 +2098,22 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
         moveSelection(0, dy)
         emit()
     })
+    // Cmd/Ctrl+A: with frames selected, select what's inside them (text, and
+    // frames fully contained); otherwise select every layer
+    function selectAll() {
+        const frames = selectedItems().filter(isFrame)
+        const inside = new Set<number>()
+        frames.forEach((f) =>
+            items.forEach((it) => {
+                if (it.id !== f.id && rectContains(f, it)) inside.add(it.id)
+            })
+        )
+        selection.clear()
+        if (inside.size) inside.forEach((id) => selection.add(id))
+        else items.forEach((it) => selection.add(it.id))
+        emit()
+    }
+
     // Arrow keys: 1px, or 10px with Shift. A frame carries the text inside it,
     // like a drag does. A quick run of presses is one undo step.
     let nudgePre = null

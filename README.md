@@ -71,6 +71,8 @@ on refresh. Clear the `canvas.doc.v1` key to start over with the demo content.
   frame once it fully encloses it — partially overlapping one leaves it alone
 - Hold Option (Alt) while dragging to duplicate
 - Double-click to edit text · Enter commits · Esc commits and deselects
+- Cmd/Ctrl+A selects everything; with a frame selected, it selects the layers inside that frame;
+  while editing text it's the browser's select-all
 - Arrow keys nudge the selection 1px, Shift+arrow 10px (a frame carries its text; a quick run of
   presses is one undo step)
 - Delete / Backspace removes selected layers
