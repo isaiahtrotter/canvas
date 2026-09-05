@@ -1031,8 +1031,16 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
         label.append(name, time)
         el.appendChild(label)
 
-        // a frame is grabbed by its title only; its body behaves like empty canvas
+        // a frame is grabbed by its title; an empty frame also from anywhere
+        // inside it. A frame holding text keeps its body as empty canvas so a
+        // marquee can start there.
         label.addEventListener("pointerdown", (e) => onItemPointerDown(e, it, el))
+        const holdsText = items.some((t) => isText(t) && t.parent === it.id)
+        if (!holdsText)
+            el.addEventListener("pointerdown", (e) => {
+                if (e.target !== el) return // the label has its own handler
+                onItemPointerDown(e, it, el)
+            })
         name.addEventListener("dblclick", (e) => {
             e.stopPropagation()
             startRenaming(name, it)
@@ -2176,10 +2184,12 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
     const fillSwatch = fillRow.querySelector<HTMLElement>(".swatch")
     const fillHex = fillRow.querySelector<HTMLElement>(".hex")
     const fillPct = fillRow.querySelector<HTMLElement>(".pct")
-    const CANVAS_DEFAULT = { light: "#ededed", dark: "#1e1e1e" }
-    let bg = { hex: CANVAS_DEFAULT.light, alpha: 100 }
-    // what actually shows behind a translucent canvas: the app surface
-    const surfaceRgb = (): [number, number, number] => (isDark() ? [0x2c, 0x2c, 0x2c] : [255, 255, 255])
+    const CANVAS_DEFAULT = "#ededed"
+    let bg = { hex: CANVAS_DEFAULT, alpha: 100 }
+    // The canvas is independent of the UI theme: its background is whatever
+    // the user set, and the label / selection colors derive from that color
+    // alone (composited over white, as before) — never from light/dark mode.
+    const surfaceRgb = (): [number, number, number] => [255, 255, 255]
     /* Frame labels (name + timestamp) sit directly on the canvas background,
        so fixed grays stop reading as the background approaches them. Two
        palettes, one switch: dark grays on light and mid-tone backgrounds,
@@ -2954,18 +2964,11 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
     function isDark() {
         return prefs.theme === "dark" || (prefs.theme === "system" && !!systemDark?.matches)
     }
-    /* Theme drives the UI tokens on :root and the canvas: a canvas still on
-       the other theme's default background moves to this one's, so dark mode
-       is dark all the way through — a custom background is left alone. */
+    /* Theme drives the UI tokens on :root only. The canvas (background,
+       frame labels, selection blue) is left alone — those already adapt to
+       the canvas background color, whatever the theme. */
     function applyTheme() {
-        const dark = isDark()
-        document.documentElement.classList.toggle("dark", dark)
-        const other = dark ? CANVAS_DEFAULT.light : CANVAS_DEFAULT.dark
-        const mine = dark ? CANVAS_DEFAULT.dark : CANVAS_DEFAULT.light
-        if (bg.hex === other && bg.alpha === 100) bg = { hex: mine, alpha: 100 }
-        applyBg()
-        updateFill()
-        scheduleSave()
+        document.documentElement.classList.toggle("dark", isDark())
         root.querySelectorAll<HTMLElement>("#prefTheme button").forEach((b) =>
             b.classList.toggle("active", b.dataset.theme === prefs.theme)
         )
@@ -3056,7 +3059,7 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
         })
     }
     root.querySelector<HTMLElement>("#prefResetBg")?.addEventListener("click", () => {
-        bg = { hex: isDark() ? CANVAS_DEFAULT.dark : CANVAS_DEFAULT.light, alpha: 100 }
+        bg = { hex: CANVAS_DEFAULT, alpha: 100 }
         applyBg()
         updateFill()
         scheduleSave()
@@ -3119,7 +3122,8 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
         seedDemoFrame()
     }
     applyView()
-    applyTheme() // also runs applyBg()
+    applyTheme()
+    applyBg()
     renderAvatar()
     restoring = true
     touchParentFrames() // prime lastText without bumping anything

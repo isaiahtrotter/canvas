@@ -72,7 +72,7 @@ export const MARKUP = `
               <label class="switch"><input type="checkbox" id="prefGrid"><span></span></label>
             </div>
             <div class="srow">
-              <div class="slabel"><b>Background</b><span>Return the canvas to the theme's default color.</span></div>
+              <div class="slabel"><b>Background</b><span>Return the canvas to its default color.</span></div>
               <button class="sbtn" id="prefResetBg" type="button">Reset background</button>
             </div>
             <div class="srow">

@@ -44,7 +44,6 @@ interface Zoom {
   vMax: number;
 }
 const FULL_ZOOM: Zoom = { sMin: 0, sMax: 100, vMin: 0, vMax: 100 };
-const LIGHTS_ZOOM: Zoom = { sMin: 0, sMax: 10, vMin: 67, vMax: 100 };
 interface Rect {
   x1: number;
   y1: number;
@@ -482,12 +481,6 @@ export default function ColorPicker({
       setAnim({ phase: "start", oldBg });
     }
   }
-
-  const GRAY_PRESETS: { label: string; zoom: Zoom }[] = [
-    { label: "Lights", zoom: LIGHTS_ZOOM },
-    { label: "Midtones", zoom: { sMin: 0, sMax: 10, vMin: 33, vMax: 67 } },
-    { label: "Shadows", zoom: { sMin: 0, sMax: 10, vMin: 0, vMax: 32 } },
-  ];
 
   function setColorFromRgb(r: number, g: number, b: number) {
     const [h, s, v] = rgbToHsv(r, g, b);
@@ -1027,32 +1020,6 @@ export default function ColorPicker({
             </button>
           </div>
         )}
-      </div>
-
-      <div style={{ display: "flex", gap: 6, marginTop: 12 }}>
-        {GRAY_PRESETS.map((p) => (
-          <button
-            key={p.label}
-            type="button"
-            className="cp-btn"
-            onClick={() => applyZoom(p.zoom)}
-            data-cursor="pointer"
-            style={{
-              flex: 1,
-              fontSize: 11,
-              fontWeight: 500,
-              color: "var(--text)",
-              background: "var(--surface)",
-              border: "1px solid var(--line)",
-              borderRadius: 6,
-              padding: "5px 0",
-              cursor: "pointer",
-              whiteSpace: "nowrap",
-            }}
-          >
-            {p.label}
-          </button>
-        ))}
       </div>
 
       <div style={{ position: "relative", height: 12, marginTop: 12 }}>
