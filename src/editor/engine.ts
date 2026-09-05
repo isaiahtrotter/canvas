@@ -884,18 +884,16 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
     let heatTimer = null // 1s refresh while on; the CSS transition smooths each step
     function applyHeat() {
         const now = Date.now()
-        const bgRgb = hexToRgb(HEAT_BG)
         items.forEach((it) => {
             const node = canvas.querySelector<HTMLElement>('[data-id="' + it.id + '"]')
             if (!node) return
             // stagger the glow so frames don't all breathe together
             node.style.setProperty("--phase", ((it.id * 0.37) % 1).toFixed(3))
             const c = heatColor(heatFromAge((now - (it.updatedAt ?? 0)) / 1000))
-            if (isFrame(it)) {
-                // frames sit a step darker than their text so text edited at the
-                // same moment still reads against its own frame
-                node.style.setProperty("--heat-frame", rgbCss(compositeOver(c, 55, bgRgb)))
-            } else node.style.setProperty("--heat", rgbCss(c))
+            // frames and text both take the full heat color, so a fresh edit is
+            // the key's bright yellow; text stays legible on a same-heat frame
+            // through its dark text-shadow edge and the frame's moving sheen
+            node.style.setProperty(isFrame(it) ? "--heat-frame" : "--heat", rgbCss(c))
         })
     }
     // the key: a gradient bar with labels placed at their heat positions
@@ -966,42 +964,127 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
         })
     }
 
+    /* The canvas DOM is reconciled in place, keyed by item id, rather than
+       rebuilt on every change. Rebuilding restarted every CSS animation and
+       dropped every in-flight transition on every layer (in the heatmap,
+       everything blinked whenever anything changed) and tore down the node
+       being edited. Now an unchanged layer's node is left exactly as it is;
+       only the properties that actually changed are written, so only the
+       affected layers transition. Handlers look their item up by id at event
+       time, since undo/redo replaces the item objects. */
+    function itemById(id: number): Item | undefined {
+        return items.find((i) => i.id === id)
+    }
+    function createTextNode(id: number) {
+        const el = document.createElement("div")
+        el.className = "titem"
+        el.dataset.id = String(id)
+        el.addEventListener("pointerdown", (e) => {
+            const it = itemById(id)
+            if (it) onItemPointerDown(e, it, el)
+        })
+        el.addEventListener("dblclick", (e) => {
+            e.stopPropagation()
+            // already editing: this is a native double-click-to-select-word,
+            // not a request to start over (which would re-select everything)
+            if (el.getAttribute("contenteditable") === "true") return
+            const it = itemById(id)
+            if (it && isText(it)) startEditing(el, it)
+        })
+        return el
+    }
+    function createFrameNode(id: number) {
+        const el = document.createElement("div")
+        el.className = "frame"
+        el.dataset.id = String(id)
+        const label = document.createElement("div")
+        label.className = "flabel"
+        const name = document.createElement("span")
+        name.className = "fname"
+        const time = document.createElement("span")
+        time.className = "ftime"
+        label.append(name, time)
+        el.appendChild(label)
+        // a frame is grabbed by its title; an empty frame also from anywhere
+        // inside it. A frame holding text keeps its body as empty canvas so a
+        // marquee can start there.
+        label.addEventListener("pointerdown", (e) => {
+            const it = itemById(id)
+            if (it) onItemPointerDown(e, it, el)
+        })
+        el.addEventListener("pointerdown", (e) => {
+            if (e.target !== el) return // the label has its own handler
+            if (items.some((t) => isText(t) && t.parent === id)) return
+            const it = itemById(id)
+            if (it) onItemPointerDown(e, it, el)
+        })
+        name.addEventListener("dblclick", (e) => {
+            e.stopPropagation()
+            const it = itemById(id)
+            if (it && isFrame(it)) startRenaming(name, it)
+        })
+        return el
+    }
+    // write a style only when it differs — an identical write is harmless
+    // to layout but would still be noise, and this keeps intent clear
+    function setStyle(el: HTMLElement, prop: string, value: string) {
+        if (el.style.getPropertyValue(prop) !== value) el.style.setProperty(prop, value)
+    }
+    function updateTextNode(el: HTMLElement, it: TextItem, multi: boolean) {
+        el.classList.toggle("sel-underline", multi && selection.has(it.id))
+        setStyle(el, "left", it.x + "px")
+        setStyle(el, "top", it.y + "px")
+        setStyle(el, "font-size", it.size + "px")
+        setStyle(el, "font-family", it.font)
+        setStyle(el, "font-weight", String(it.weight))
+        setStyle(el, "line-height", String(lineHeightOf(it)))
+        setStyle(el, "letter-spacing", letterSpacingOf(it) + "px")
+        setStyle(el, "opacity", String((it.opacity != null ? it.opacity : 100) / 100))
+        setStyle(el, "color", rgbaCss(it.fill, it.alpha))
+        // the node being edited owns its own text until it commits
+        if (el !== editingEl && el.textContent !== it.text) el.textContent = it.text
+    }
+    function updateFrameNode(el: HTMLElement, it: FrameItem) {
+        el.classList.toggle("selected", selection.has(it.id))
+        setStyle(el, "left", it.x + "px")
+        setStyle(el, "top", it.y + "px")
+        setStyle(el, "width", it.w + "px")
+        setStyle(el, "height", it.h + "px")
+        setStyle(el, "background", rgbaCss(it.fill, it.alpha))
+        const name = el.querySelector<HTMLElement>(".fname")
+        const time = el.querySelector<HTMLElement>(".ftime")
+        if (name && name.getAttribute("contenteditable") !== "true" && name.textContent !== it.name)
+            name.textContent = it.name
+        if (time && time.dataset.t !== String(it.updatedAt)) {
+            time.dataset.t = String(it.updatedAt)
+            time.textContent = relTime(it.updatedAt)
+            time.title = absTime(it.updatedAt)
+        }
+    }
     function renderCanvas() {
-        world.innerHTML = ""
         const multi = selection.size > 1
         // frames sit under text
         const ordered = [...items.filter(isFrame), ...items.filter(isText)]
+        const live = new Set(ordered.map((it) => it.id))
+        // drop nodes whose item is gone (leave anything without an id, like a frame draft)
+        Array.from(world.children).forEach((n) => {
+            const idAttr = (n as HTMLElement).dataset.id
+            if (idAttr !== undefined && !live.has(Number(idAttr))) n.remove()
+        })
+        // walk the expected order; a node is only moved when it's out of place
+        let cursor: ChildNode | null = world.firstChild
         ordered.forEach((it) => {
-            if (isFrame(it)) {
-                world.appendChild(renderFrame(it))
-                return
+            const want = isFrame(it) ? "frame" : "titem"
+            let el = world.querySelector<HTMLElement>(':scope > [data-id="' + it.id + '"]')
+            if (el && !el.classList.contains(want)) {
+                el.remove()
+                el = null
             }
-            const el = document.createElement("div")
-            el.className =
-                "titem" +
-                (multi && selection.has(it.id) ? " sel-underline" : "")
-            el.style.left = it.x + "px"
-            el.style.top = it.y + "px"
-            el.style.fontSize = it.size + "px"
-            el.style.fontFamily = it.font
-            el.style.fontWeight = String(it.weight)
-            el.style.lineHeight = String(lineHeightOf(it))
-            el.style.letterSpacing = letterSpacingOf(it) + "px"
-            el.style.opacity = String((it.opacity != null ? it.opacity : 100) / 100)
-            el.style.color = rgbaCss(it.fill, it.alpha)
-            el.textContent = it.text
-            el.dataset.id = String(it.id)
-            el.addEventListener("pointerdown", (e) =>
-                onItemPointerDown(e, it, el)
-            )
-            el.addEventListener("dblclick", (e) => {
-                e.stopPropagation()
-                // already editing: this is a native double-click-to-select-word,
-                // not a request to start over (which would re-select everything)
-                if (el.getAttribute("contenteditable") === "true") return
-                startEditing(el, it)
-            })
-            world.appendChild(el)
+            if (!el) el = isFrame(it) ? createFrameNode(it.id) : createTextNode(it.id)
+            if (el === cursor) cursor = cursor.nextSibling
+            else world.insertBefore(el, cursor)
+            if (isFrame(it)) updateFrameNode(el, it)
+            else updateTextNode(el, it as TextItem, multi)
         })
         applyWash()
         applyClips()
@@ -1135,46 +1218,6 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
                     .reverse()
                     .forEach((t) => layerList.appendChild(layerRow(t, true)))
             })
-    }
-
-    function renderFrame(it: FrameItem) {
-        const el = document.createElement("div")
-        el.className = "frame" + (selection.has(it.id) ? " selected" : "")
-        el.style.left = it.x + "px"
-        el.style.top = it.y + "px"
-        el.style.width = it.w + "px"
-        el.style.height = it.h + "px"
-        el.style.background = rgbaCss(it.fill, it.alpha)
-        el.dataset.id = String(it.id)
-
-        const label = document.createElement("div")
-        label.className = "flabel"
-        const name = document.createElement("span")
-        name.className = "fname"
-        name.textContent = it.name
-        const time = document.createElement("span")
-        time.className = "ftime"
-        time.dataset.t = String(it.updatedAt)
-        time.textContent = relTime(it.updatedAt)
-        time.title = absTime(it.updatedAt)
-        label.append(name, time)
-        el.appendChild(label)
-
-        // a frame is grabbed by its title; an empty frame also from anywhere
-        // inside it. A frame holding text keeps its body as empty canvas so a
-        // marquee can start there.
-        label.addEventListener("pointerdown", (e) => onItemPointerDown(e, it, el))
-        const holdsText = items.some((t) => isText(t) && t.parent === it.id)
-        if (!holdsText)
-            el.addEventListener("pointerdown", (e) => {
-                if (e.target !== el) return // the label has its own handler
-                onItemPointerDown(e, it, el)
-            })
-        name.addEventListener("dblclick", (e) => {
-            e.stopPropagation()
-            startRenaming(name, it)
-        })
-        return el
     }
 
     // One-time initial layout for the default demo lines: each line is

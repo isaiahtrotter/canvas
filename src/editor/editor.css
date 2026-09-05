@@ -188,10 +188,22 @@
   content:'';position:absolute;inset:0;pointer-events:none;z-index:-1;opacity:0;
 }
 .canvas.heat .frame{background:transparent !important;}
+/* the fill is a solid heat color (so it can transition) with a translucent
+   sheen band on top that travels top-left → bottom-right like a slow wave;
+   the band sits in the middle of an oversized gradient so there's a pause
+   between passes */
 .canvas.heat .frame::before{
-  background:var(--heat-frame, #1a0533);
+  background-color:var(--heat-frame, #1a0533);
+  background-image:linear-gradient(135deg,
+    transparent 0%, transparent 36%,
+    rgba(255,255,255,.10) 44%, rgba(255,255,255,.22) 50%, rgba(255,255,255,.10) 56%,
+    transparent 64%, transparent 100%);
+  background-size:300% 300%;
   filter:blur(calc(.8px * var(--inv)));
+  animation:heatwave 7s linear infinite;
+  animation-delay:calc(var(--phase, 0) * -7s);
 }
+@keyframes heatwave{from{background-position:0% 0%;}to{background-position:100% 100%;}}
 .canvas.heat .frame::after{
   box-shadow:0 0 calc(34px * var(--inv)) calc(8px * var(--inv)) var(--heat-frame, #1a0533);
   animation:heatglow 3.6s ease-in-out infinite;
@@ -204,9 +216,10 @@
   animation-delay:calc(var(--phase, 0) * -3.6s);
 }
 @keyframes heatglow{0%,100%{opacity:.3;}50%{opacity:.85;}}
+/* a thin dark edge keeps text readable on a frame of the same heat */
 @keyframes heatglow-text{
-  0%,100%{text-shadow:0 0 calc(6px * var(--inv)) var(--heat, #fbea6a);}
-  50%{text-shadow:0 0 calc(18px * var(--inv)) var(--heat, #fbea6a);}
+  0%,100%{text-shadow:0 0 calc(2px * var(--inv)) rgba(0,0,0,.7), 0 0 calc(6px * var(--inv)) var(--heat, #fbea6a);}
+  50%{text-shadow:0 0 calc(2px * var(--inv)) rgba(0,0,0,.7), 0 0 calc(18px * var(--inv)) var(--heat, #fbea6a);}
 }
 /* steady state: applyHeat() refreshes --heat every second, and a 1s linear
    transition on the properties that read it turns those steps into a drift */
