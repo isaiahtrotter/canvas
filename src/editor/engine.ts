@@ -898,7 +898,7 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
             if (!(node.classList.contains("sel-underline") || node === lastHover)) return
             const { w, h } = nodeSize(it)
             if (!w) return
-            const y = it.y + h - 2 - it.size * 0.22 // 2 = the text box's bottom padding
+            const y = it.y + h - it.size * 0.22
             const a = toScreen(it.x, y)
             const u = document.createElement("div")
             u.className = "tunder"
@@ -1251,6 +1251,10 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
         }
         const t = e.target as HTMLElement
         if (t !== canvas && t !== world && !t.classList.contains("frame")) return
+        // clicking away from text being edited: drop the selection now, before
+        // the blur commits the edit — otherwise the regular selection box (with
+        // handles) flashes for the span between mousedown and mouseup
+        if (editingEl && selection.size) selection.clear()
         const rect = canvas.getBoundingClientRect()
         const s = toWorld(e.clientX, e.clientY)
         let marquee: HTMLDivElement | null = null,

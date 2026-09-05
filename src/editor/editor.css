@@ -83,7 +83,7 @@
    cursor value, so anything draggable here gets the morphing hand for free */
 .titem{
   position:absolute;cursor:pointer;white-space:nowrap;line-height:1.2;
-  padding:2px 0;border-radius:2px;color:#1c1c1c;
+  padding:0;border-radius:0;color:#1c1c1c;
 }
 .titem.dragging{cursor:pointer;}
 /* hover / multi-select underlines are drawn in the #overlay (.tunder), not
@@ -94,9 +94,12 @@
    the whole text box. */
 .titem[contenteditable="true"]{
   cursor:text;user-select:text;outline:none;
-  background:rgba(12,140,233,.12);
+  background:rgba(12,140,233,.16);
 }
-.titem[contenteditable="true"]::selection{background:rgba(12,140,233,.22);}
+/* the element's own fill IS the highlight: with no padding the text box
+   and the line box coincide, so it fills the selection box exactly, and
+   the native highlight is turned off so nothing overlaps it */
+.titem[contenteditable="true"]::selection{background:transparent;}
 
 /* Figma-style selection overlay */
 .selbox{
