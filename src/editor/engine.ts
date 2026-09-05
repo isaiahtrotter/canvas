@@ -3,7 +3,7 @@
 // and returns a cleanup that tears the whole thing down.
 import { MARKUP } from "./markup"
 import { absTime, relTime } from "./time"
-import { compositeOver, contrastRatio, hexToRgb, isHex, relativeLuminance, rgbaCss } from "./color"
+import { compositeOver, contrastRatio, hexToRgb, isHex, rgbaCss } from "./color"
 
 interface TextItem {
     kind: "text"
@@ -2142,20 +2142,15 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
     const fillPct = fillRow.querySelector<HTMLElement>(".pct")
     let bg = { hex: "#ededed", alpha: 100 }
     /* Frame labels (name + timestamp) sit directly on the canvas background,
-       so their fixed grays stop reading as the background approaches them.
-       Three palettes, chosen from the composited background's luminance so
-       the colors switch as rarely as possible while staying legible:
-         light  — the default soft grays, kept while the timestamp (the
-                  fainter of the two) still has a usable contrast against it
-         dark   — stronger grays for mid-tone backgrounds
-         pale   — light grays once the background is dark enough that the
-                  dark palette would give less contrast than a light one */
+       so fixed grays stop reading as the background approaches them. Two
+       palettes, one switch: dark grays on light and mid-tone backgrounds,
+       pale grays once the background is dark enough that a light label reads
+       better than a dark one. (A softer third tier for very light
+       backgrounds was tried and dropped — the timestamp washed out.) */
     const LABEL_PALETTES = {
-        light: { name: "#6e6e6e", time: "#b0b0ae", grid: "rgba(0,0,0,.09)" },
         dark: { name: "#1c1c1c", time: "#5a5a5a", grid: "rgba(0,0,0,.11)" },
         pale: { name: "#f4f4f4", time: "#a8a8a8", grid: "rgba(255,255,255,.13)" },
     }
-    const MIN_TIME_CONTRAST = 1.6 // the default timestamp on #ededed is ~1.85
     /* The selection blue (frame name when selected/hovered, selection box,
        handles, underlines, marquee) gets the same treatment: the brand accent
        stays until the background gets close to it, then a darker or a paler
@@ -2171,12 +2166,6 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
     function labelPalette() {
         const seen = compositeOver(hexToRgb(bg.hex), bg.alpha, [255, 255, 255]) // canvas sits on the white app
         const timeContrast = (p: { time: string }) => contrastRatio(hexToRgb(p.time), seen)
-        // the soft grays are for backgrounds lighter than they are — on a dark
-        // background the faint timestamp would pass while the name vanished
-        const lighterThanLabels =
-            relativeLuminance(seen) > relativeLuminance(hexToRgb(LABEL_PALETTES.light.time))
-        if (lighterThanLabels && timeContrast(LABEL_PALETTES.light) >= MIN_TIME_CONTRAST)
-            return LABEL_PALETTES.light
         return timeContrast(LABEL_PALETTES.dark) >= timeContrast(LABEL_PALETTES.pale)
             ? LABEL_PALETTES.dark
             : LABEL_PALETTES.pale
@@ -2286,6 +2275,12 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
             if (isFrame(it)) it.updatedAt = now
         })
         emit()
+    }
+
+    // Every numeric field steps with the arrow keys: ±1 unit, ×10 with Shift
+    function arrowStep(e: KeyboardEvent, unit = 1) {
+        const dir = e.key === "ArrowUp" ? 1 : -1
+        return dir * unit * (e.shiftKey ? 10 : 1)
     }
 
     // position / dimensions / opacity fields, live-bound to the selection
@@ -2439,6 +2434,15 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
         })
         i.addEventListener("keydown", (e) => {
             if (e.key === "Enter") i.blur()
+            // arrows step the value (Shift ×10) and apply it like typing would
+            if (e.key === "ArrowUp" || e.key === "ArrowDown") {
+                e.preventDefault()
+                if (i.disabled) return
+                const cur = parseFloat(i.value)
+                if (isNaN(cur)) return
+                i.value = String(Math.round(cur + arrowStep(e)))
+                i.dispatchEvent(new Event("input"))
+            }
         })
     })
     let activeWidget = null
@@ -2659,12 +2663,11 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
                     e.preventDefault()
                     const sel = selectedTextItems()
                     if (!sel.length) return
-                    const dir = e.key === "ArrowUp" ? 1 : -1
-                    const s = step * (e.shiftKey ? 10 : 1)
+                    const s = arrowStep(e, step)
                     if (!pre) pre = snapshot()
                     pushHistory(pre)
                     pre = null
-                    sel.forEach((it) => write(it, Number((read(it) + dir * s).toFixed(decimals))))
+                    sel.forEach((it) => write(it, Number((read(it) + s).toFixed(decimals))))
                     emit()
                     update(true)
                 }
@@ -2815,7 +2818,7 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
             }
             if (e.key === "ArrowUp" || e.key === "ArrowDown") {
                 e.preventDefault()
-                adapter.nudge(e.key === "ArrowUp" ? 1 : -1)
+                adapter.nudge(arrowStep(e))
                 updateField(true) // force: this is a real value change, not mid-typing
             }
         })

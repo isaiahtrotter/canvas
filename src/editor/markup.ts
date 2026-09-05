@@ -43,8 +43,8 @@ export const MARKUP = `
         <div class="sp-label" id="fillLabel">Fill</div>
         <button class="fillrow" id="fillRow" type="button" tabindex="-1" aria-label="Fill color"><span class="swatch"></span><span class="hex">1C1C1C</span><span class="pct">100%</span></button>
       </div>
-      <div class="sp-divider"></div>
-      <div class="sp-section">
+      <div class="sp-divider sp-hidden"></div>
+      <div class="sp-section sp-hidden">
         <div class="sp-label">Versions</div>
         <div class="vergroup">
           <div class="vind" id="vind"></div>

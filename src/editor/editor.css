@@ -240,6 +240,8 @@
 /* nothing selected: only the Background section remains */
 .sidepanel.empty .sp-section:not(.sp-fill), .sidepanel.empty .sp-divider{display:none;}
 .sp-section{display:flex;flex-direction:column;gap:8px;padding:0 4px;}
+/* parked sections (Versions, for now) */
+.sp-section.sp-hidden, .sp-divider.sp-hidden{display:none;}
 .sp-divider{height:1px;background:#f0f0ee;margin:0 -8px;}
 .sp-label{font-size:11px;font-weight:600;color:#9a9a9a;text-transform:uppercase;letter-spacing:.05em;}
 
