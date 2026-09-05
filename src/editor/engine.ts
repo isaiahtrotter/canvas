@@ -149,11 +149,16 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
     // as normal but the frame it happened to pass through/leave along the
     // way does not also light up
     let suppressLeaveBump = false
+    // true while a drag re-renders mid-gesture (a duplicate appearing or
+    // being withdrawn): nothing is diffed or stamped, and the pre-drag
+    // baseline is kept intact so the release can settle everything at once
+    let skipTouch = false
     const lastText = new Map<number, { sig: string; parent: number | null }>()
     function textSig(it: TextItem) {
         return [it.x, it.y, it.text, it.size, it.font, it.weight, it.fill, it.alpha, lineHeightOf(it), letterSpacingOf(it)].join("|")
     }
     function touchParentFrames() {
+        if (skipTouch) return
         const now = Date.now()
         const seen = new Set<number>()
         items.filter(isText).forEach((t) => {
@@ -1645,25 +1650,34 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
         const preDrag = snapshot() // pre-state: pushed once if the gesture actually moves anything
         let moved = false
         let duplicated = false
+        let copyIds: number[] = [] // the copies left at the origin while option is held
         // .dragging lifts the moving frame above other frames and its carried
         // text above the frame (see CSS). emit() re-renders the DOM, so this
-        // is re-applied after the mid-drag duplicate, not just at the start.
+        // is re-applied after a mid-drag duplicate, not just at the start.
         const markDragging = (on: boolean) =>
             starts.forEach((s) => {
                 const node = canvas.querySelector<HTMLElement>('[data-id="' + s.it.id + '"]')
                 if (node) node.classList.toggle("dragging", on)
             })
         markDragging(true)
-        function mv(ev: PointerEvent) {
-            const dx = (ev.clientX - startX) / view.z,
-                dy = (ev.clientY - startY) / view.z
-            if (!moved && (Math.abs(dx) * view.z > 2 || Math.abs(dy) * view.z > 2)) {
-                moved = true
-                pushHistory(preDrag)
-            }
-            // option (mac) / ctrl (windows) duplicates — works whether held at click time
-            // or pressed at any point during the drag: a copy is left at the origin
-            if (moved && !duplicated && (ev.altKey || ev.ctrlKey)) {
+        // a mid-gesture re-render: shows/hides the copies without any frame
+        // timestamp moving — those settle once, at release
+        function rerenderQuiet() {
+            skipTouch = true
+            emit()
+            skipTouch = false
+            markDragging(true) // the re-render dropped the class
+        }
+        /* Option (mac) / ctrl (windows) is a live modifier, not a one-shot
+           trigger. While it's held, a copy of what's being dragged sits at the
+           origin and the item under the pointer is the duplicate. Let go of it
+           mid-drag and the copy is withdrawn — you're just moving the original
+           again. Press it again and the copy is back. Nothing about frame
+           timestamps happens here; the frame the item is dropped in is stamped
+           at release, and only that one. */
+        function syncDuplicate(alt: boolean) {
+            if (!moved) return
+            if (alt && !duplicated) {
                 duplicated = true
                 // the copies stay where the drag began, so they keep the
                 // membership from then — pointed at the copied frame when
@@ -1671,23 +1685,47 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
                 const copies = new Map<number, number>()
                 starts
                     .filter((s) => isFrame(s.it))
-                    .forEach((s) => copies.set(s.it.id, duplicateItem(s.it, s.x, s.y).id))
+                    .forEach((s) => {
+                        const c = duplicateItem(s.it, s.x, s.y)
+                        copies.set(s.it.id, c.id)
+                        copyIds.push(c.id)
+                    })
                 starts
                     .filter((s) => isText(s.it))
                     .forEach((s) => {
                         const c = duplicateItem(s.it, s.x, s.y) as TextItem
                         c.parent = s.parent == null ? null : copies.get(s.parent) ?? s.parent
-                        // the copy left behind isn't itself a content change —
-                        // it's exactly what was already there — so pre-seed its
-                        // tracking as already-settled rather than letting
-                        // touchParentFrames see it as new and bump its frame.
-                        // (A genuine future edit to this layer still tracks
-                        // normally from here on.)
+                        copyIds.push(c.id)
+                        // the copy left behind isn't a content change — it's
+                        // exactly what was already there — so it's tracked as
+                        // already-settled and never stamps its frame. (A real
+                        // future edit to this layer still tracks normally.)
                         lastText.set(c.id, { sig: textSig(c), parent: c.parent ?? null })
                     })
-                emit()
-                markDragging(true) // the re-render dropped the class
+                rerenderQuiet()
+            } else if (!alt && duplicated) {
+                duplicated = false
+                const gone = new Set(copyIds)
+                copyIds = []
+                for (let i = items.length - 1; i >= 0; i--) if (gone.has(items[i].id)) items.splice(i, 1)
+                gone.forEach((id) => lastText.delete(id))
+                rerenderQuiet()
             }
+        }
+        // the modifier can change without the pointer moving
+        const onModKey = (e: KeyboardEvent) => {
+            if (e.key === "Alt" || e.key === "Control") syncDuplicate(e.type === "keydown")
+        }
+        document.addEventListener("keydown", onModKey)
+        document.addEventListener("keyup", onModKey)
+        function mv(ev: PointerEvent) {
+            const dx = (ev.clientX - startX) / view.z,
+                dy = (ev.clientY - startY) / view.z
+            if (!moved && (Math.abs(dx) * view.z > 2 || Math.abs(dy) * view.z > 2)) {
+                moved = true
+                pushHistory(preDrag)
+            }
+            syncDuplicate(ev.altKey || ev.ctrlKey)
             starts.forEach((s) => {
                 s.it.x = Math.round(s.x + dx)
                 s.it.y = Math.round(s.y + dy)
@@ -1713,6 +1751,8 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
             markDragging(false)
             document.removeEventListener("pointermove", mv)
             document.removeEventListener("pointerup", up)
+            document.removeEventListener("keydown", onModKey)
+            document.removeEventListener("keyup", onModKey)
             if (moved) {
                 // dragging a frame carries its contents along for the ride —
                 // that's not a content edit, so don't let the position diff
