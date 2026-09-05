@@ -23,7 +23,8 @@ src/
   editor/
     engine.ts            The editor itself — vanilla DOM, mountEditor(root) → cleanup
     markup.ts            Static sidebar/canvas markup the engine renders into
-    editor.css           All editor styling
+    editor.css           All editor styling. Selection box, handles, marquee and measurement
+                         guides render in a screen-space #overlay layer (constant 1px at any zoom)
     time.ts              Relative/absolute time formatting for frame timestamps
     color.ts             Color math (hex/rgb/hsv) shared by the engine and the picker
   components/ColorPicker.tsx  Controlled color picker rendered by the React shell
@@ -59,15 +60,16 @@ reference/               Original Framer components this was ported from
 **Measuring**
 - Hold Option (Alt on Windows) and hover another layer to see the pixel gap to the current
   selection: a guide runs from the middle of the selection's facing side straight to the hovered
-  target's edge. Hovering the frame that contains the selection draws two guides, from the
-  selection's edges out to whichever frame edges sit nearest the cursor — so they re-target as you
-  move toward a different edge, but never slide with the cursor
+  target's edge. Hovering the frame that contains the selection draws rulers to all four of its
+  edges. Pressing Option shows them immediately, even with a still mouse
 
 **Text**
 - Click / shift-click / marquee-drag to select text layers; drag to move. A marquee only picks up a
   frame once it fully encloses it — partially overlapping one leaves it alone
 - Hold Option (Alt) while dragging to duplicate
 - Double-click to edit text · Enter commits · Esc commits and deselects
+- Arrow keys nudge the selection 1px, Shift+arrow 10px (a frame carries its text; a quick run of
+  presses is one undo step)
 - Delete / Backspace removes selected layers
 - Cmd/Ctrl+Z undo · Shift+Cmd/Ctrl+Z redo (20 steps)
 - Font dropdown switches the selected text between Inter, PP Mondwest, PP NeueBit, Helvetica Neue, Georgia

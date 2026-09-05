@@ -289,6 +289,11 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
     const app = root.querySelector<HTMLElement>(".app")
     const canvas = root.querySelector<HTMLElement>("#canvas")
     const world = root.querySelector<HTMLElement>("#world")
+    // Chrome that must render at a constant screen size (selection box,
+    // handles, marquee, measurement guides) lives here, in screen space,
+    // instead of inside the scaled #world — so a 1px border is 1px at any
+    // zoom, with no counter-scaling and no blurry fractional strokes.
+    const overlay = root.querySelector<HTMLElement>("#overlay")
     let editingEl = null
     let hoverWash = null // {id, color} — set while a slider handle is hovered/dragged
 
@@ -304,6 +309,9 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
         world.style.setProperty("--inv", String(1 / view.z))
         if (zoomVal) zoomVal.textContent = Math.round(view.z * 100) + "%"
         updateMinimap()
+        // screen-space chrome has to follow the view
+        renderSelectionOverlay()
+        refreshMeasure()
     }
 
     /* ---- minimap: fades in above the zoom pill once nothing is on screen.
@@ -427,6 +435,17 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
             y: (clientY - r.top - view.y) / view.z,
         }
     }
+    // world → canvas-relative screen coords
+    function toScreen(x: number, y: number) {
+        return { x: view.x + x * view.z, y: view.y + y * view.z }
+    }
+    function placeScreenRect(el: HTMLElement, r: { x: number; y: number; w: number; h: number }) {
+        const p = toScreen(r.x, r.y)
+        el.style.left = p.x + "px"
+        el.style.top = p.y + "px"
+        el.style.width = r.w * view.z + "px"
+        el.style.height = r.h * view.z + "px"
+    }
     // zoom so the world point under canvas-relative (cx, cy) stays put
     function zoomAt(factor: number, cx: number, cy: number) {
         const z = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, view.z * factor))
@@ -509,19 +528,24 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
        nearest the cursor, each labeled with the distance from the selection. ---- */
     let altDown = false
     let measureBox: HTMLElement | null = null
+    let measureSig = "" // what's currently drawn; skip the rebuild when nothing changed
+    let lastHover: HTMLElement | null = null // last layer under the pointer, kept even without Alt
     function setAltDown(v: boolean) {
         if (altDown === v) return
         altDown = v
-        if (!v) clearMeasure()
+        if (v) refreshMeasure() // show immediately, even if the mouse is still
+        else clearMeasure()
     }
     function clearMeasure() {
         measureBox?.remove()
         measureBox = null
+        measureSig = ""
     }
     function itemBounds(it: Item) {
         const { w, h } = nodeSize(it)
         return { x: it.x, y: it.y, w, h }
     }
+    // a guide between two world points on one axis; drawn in screen space
     function addMeasureLine(
         container: HTMLElement,
         x1: number,
@@ -530,42 +554,47 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
         y2: number,
         dist: number
     ) {
+        if (Math.abs(dist) < 0.5) return // touching — nothing to show
+        const a = toScreen(x1, y1),
+            b = toScreen(x2, y2)
         const horizontal = y1 === y2
         const line = document.createElement("div")
         line.className = "measure-line"
         if (horizontal) {
-            line.style.left = Math.min(x1, x2) + "px"
-            line.style.top = y1 + "px"
-            line.style.width = Math.abs(x2 - x1) + "px"
-            line.style.height = "calc(1px * var(--inv))"
+            line.style.left = Math.min(a.x, b.x) + "px"
+            line.style.top = a.y + "px"
+            line.style.width = Math.abs(b.x - a.x) + "px"
+            line.style.height = "1px"
         } else {
-            line.style.left = x1 + "px"
-            line.style.top = Math.min(y1, y2) + "px"
-            line.style.width = "calc(1px * var(--inv))"
-            line.style.height = Math.abs(y2 - y1) + "px"
+            line.style.left = a.x + "px"
+            line.style.top = Math.min(a.y, b.y) + "px"
+            line.style.width = "1px"
+            line.style.height = Math.abs(b.y - a.y) + "px"
         }
         container.appendChild(line)
         const label = document.createElement("div")
         label.className = "measure-label"
         label.textContent = Math.round(Math.abs(dist)) + "px"
-        label.style.left = (x1 + x2) / 2 + "px"
-        label.style.top = (y1 + y2) / 2 + "px"
+        label.style.left = (a.x + b.x) / 2 + "px"
+        label.style.top = (a.y + b.y) / 2 + "px"
         container.appendChild(label)
     }
     // Guides run from the middle of the selection's facing side straight to
-    // the hovered target's edge. They're anchored on the selection's center
-    // lines, so they never slide with the cursor; when the target surrounds
-    // the selection (its frame), the cursor only picks WHICH edges — the
-    // vertical and horizontal ones nearest to it — so the guides jump when
-    // the mouse crosses the frame's midlines and otherwise hold still.
-    function measureTo(container: HTMLElement, sel, target, mouse: { x: number; y: number }) {
+    // the hovered target's edge. When the target surrounds the selection (its
+    // frame), rulers extend to all four of its edges.
+    function measureTo(container: HTMLElement, sel, target) {
         const selCx = sel.x + sel.w / 2,
             selCy = sel.y + sel.h / 2
         const overlapX = Math.max(sel.x, target.x) < Math.min(sel.x + sel.w, target.x + target.w)
         const overlapY = Math.max(sel.y, target.y) < Math.min(sel.y + sel.h, target.y + target.h)
+        if (overlapX && overlapY) {
+            addMeasureLine(container, target.x, selCy, sel.x, selCy, sel.x - target.x) // left
+            addMeasureLine(container, sel.x + sel.w, selCy, target.x + target.w, selCy, target.x + target.w - (sel.x + sel.w)) // right
+            addMeasureLine(container, selCx, target.y, selCx, sel.y, sel.y - target.y) // top
+            addMeasureLine(container, selCx, sel.y + sel.h, selCx, target.y + target.h, target.y + target.h - (sel.y + sel.h)) // bottom
+            return
+        }
         if (!overlapY) {
-            // target sits above or below: vertical line from the selection's
-            // top/bottom-center to the target's facing edge
             const below = target.y >= sel.y + sel.h
             const y1 = below ? sel.y + sel.h : sel.y
             const y2 = below ? target.y : target.y + target.h
@@ -577,42 +606,45 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
             const x2 = right ? target.x : target.x + target.w
             addMeasureLine(container, x1, selCy, x2, selCy, x2 - x1)
         }
-        if (overlapX && overlapY) {
-            // the target surrounds (or straddles) the selection, e.g. hovering
-            // its containing frame: from the selection's edge out to whichever
-            // frame edge is nearest the cursor, one per axis
-            const edgeV = mouse.x - target.x <= target.x + target.w - mouse.x ? "l" : "r"
-            const tx = edgeV === "l" ? target.x : target.x + target.w
-            const sx = edgeV === "l" ? sel.x : sel.x + sel.w
-            addMeasureLine(container, tx, selCy, sx, selCy, sx - tx)
-            const edgeH = mouse.y - target.y <= target.y + target.h - mouse.y ? "t" : "b"
-            const ty = edgeH === "t" ? target.y : target.y + target.h
-            const sy = edgeH === "t" ? sel.y : sel.y + sel.h
-            addMeasureLine(container, selCx, ty, selCx, sy, sy - ty)
-        }
     }
-    function updateMeasure(hovered: Item | null | undefined, mouse: { x: number; y: number }) {
+    function hoveredItem(): Item | null {
+        if (!lastHover || !lastHover.isConnected) return null
+        return items.find((it) => it.id === Number(lastHover.dataset.id)) ?? null
+    }
+    // (re)draw for the current hover — cheap no-op when nothing relevant changed
+    function refreshMeasure(force = false) {
+        const hovered = altDown ? hoveredItem() : null
+        const sel = hovered && !selection.has(hovered.id) ? selectionBounds() : null
+        if (!hovered || !sel) {
+            clearMeasure()
+            return
+        }
+        const hb = itemBounds(hovered)
+        const sig = [hovered.id, sel.x, sel.y, sel.w, sel.h, hb.x, hb.y, hb.w, hb.h, view.x, view.y, view.z].join("|")
+        if (!force && sig === measureSig && measureBox) return
         clearMeasure()
-        if (!altDown || !hovered || selection.has(hovered.id)) return
-        const sel = selectionBounds()
-        if (!sel) return
+        measureSig = sig
         measureBox = document.createElement("div")
         measureBox.className = "measure"
-        measureTo(measureBox, sel, itemBounds(hovered), mouse)
-        world.appendChild(measureBox)
+        measureTo(measureBox, sel, hb)
+        overlay.appendChild(measureBox)
     }
     canvas.addEventListener("pointermove", (e: PointerEvent) => {
+        // remember what's under the pointer even without Alt, so pressing Alt
+        // with a still mouse can show the measurement right away
+        lastHover = (e.target as HTMLElement).closest<HTMLElement>(".titem, .frame")
         // e.buttons !== 0 means some other gesture (drag, resize, pan...) owns
         // this move — Alt already means "duplicate" mid-drag, so stay out of the way
         if (!altDown || e.buttons !== 0) {
             if (measureBox) clearMeasure()
             return
         }
-        const t = (e.target as HTMLElement).closest<HTMLElement>(".titem, .frame")
-        const hovered = t ? items.find((it) => it.id === Number(t.dataset.id)) : null
-        updateMeasure(hovered, toWorld(e.clientX, e.clientY))
+        refreshMeasure()
     })
-    canvas.addEventListener("pointerleave", () => clearMeasure())
+    canvas.addEventListener("pointerleave", () => {
+        lastHover = null
+        clearMeasure()
+    })
 
     /* ---- tools: V = move/select, F = draw a frame ---- */
     type Tool = "move" | "frame"
@@ -856,10 +888,7 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
         if (!b) return
         const box = document.createElement("div")
         box.className = "selbox"
-        box.style.left = b.x + "px"
-        box.style.top = b.y + "px"
-        box.style.width = b.w + "px"
-        box.style.height = b.h + "px"
+        placeScreenRect(box, b)
         const frame = singleSelectedFrame() // a lone frame gets live resize handles
         ;["tl", "tr", "bl", "br"].forEach((c) => {
             const h = document.createElement("div")
@@ -883,7 +912,7 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
         size.className = "selsize"
         size.textContent = Math.round(b.w) + " × " + Math.round(b.h)
         box.appendChild(size)
-        world.appendChild(box)
+        overlay.appendChild(box)
     }
 
     function startResize(e: PointerEvent, it: FrameItem, corner: string) {
@@ -1223,33 +1252,27 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
                 moved = true
                 marquee = document.createElement("div")
                 marquee.className = "marquee"
-                world.appendChild(marquee)
+                overlay.appendChild(marquee)
             }
             if (!marquee) return
             const x = Math.min(s.x, p.x),
                 y = Math.min(s.y, p.y)
             const w = Math.abs(p.x - s.x),
                 h = Math.abs(p.y - s.y)
-            marquee.style.left = x + "px"
-            marquee.style.top = y + "px"
-            marquee.style.width = w + "px"
-            marquee.style.height = h + "px"
             marqueeRect = { x, y, w, h }
+            placeScreenRect(marquee, marqueeRect)
             // live highlight: text the rectangle touches gets the blue underline;
             // a frame it fully covers gets a selection box right away, so you
             // can see the moment it's captured rather than only on release
             const touched = hits(marqueeRect)
-            world.querySelectorAll<HTMLElement>(".selbox.live").forEach((n) => n.remove())
+            overlay.querySelectorAll<HTMLElement>(".selbox.live").forEach((n) => n.remove())
             items.forEach((it) => {
                 if (isFrame(it)) {
                     if (!touched.has(it.id)) return
                     const b = document.createElement("div")
                     b.className = "selbox live"
-                    b.style.left = it.x + "px"
-                    b.style.top = it.y + "px"
-                    b.style.width = it.w + "px"
-                    b.style.height = it.h + "px"
-                    world.appendChild(b)
+                    placeScreenRect(b, it)
+                    overlay.appendChild(b)
                     return
                 }
                 const node = canvas.querySelector<HTMLElement>('[data-id="' + it.id + '"]')
@@ -1319,6 +1342,14 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
         }
         if (e.key === "f" || e.key === "F") {
             setTool("frame")
+            return
+        }
+        if (e.key.startsWith("Arrow") && selection.size) {
+            e.preventDefault()
+            const step = e.shiftKey ? 10 : 1
+            const dx = e.key === "ArrowLeft" ? -step : e.key === "ArrowRight" ? step : 0
+            const dy = e.key === "ArrowUp" ? -step : e.key === "ArrowDown" ? step : 0
+            nudgeSelection(dx, dy)
             return
         }
         if (e.key === "Escape") {
@@ -1969,6 +2000,35 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
         moveSelection(0, dy)
         emit()
     })
+    // Arrow keys: 1px, or 10px with Shift. A frame carries the text inside it,
+    // like a drag does. A quick run of presses is one undo step.
+    let nudgePre = null
+    let nudgeTimer = null
+    function nudgeSelection(dx: number, dy: number) {
+        const moving = new Map<number, Item>()
+        selectedItems().forEach((it) => moving.set(it.id, it))
+        selectedItems()
+            .filter(isFrame)
+            .forEach((f) =>
+                items.filter(isText).forEach((t) => {
+                    if (rectContains(f, t)) moving.set(t.id, t)
+                })
+            )
+        if (!moving.size) return
+        if (!nudgePre) {
+            nudgePre = snapshot()
+            pushHistory(nudgePre)
+        }
+        clearTimeout(nudgeTimer)
+        nudgeTimer = setTimeout(() => (nudgePre = null), 600)
+        moving.forEach((it) => {
+            it.x += dx
+            it.y += dy
+        })
+        if (Array.from(moving.values()).some(isFrame)) carryingFrameDrag = true
+        emit()
+        carryingFrameDrag = false
+    }
     // repositioning a frame (typed X/Y) isn't a content edit either
     function moveSelection(dx: number, dy: number) {
         selectedItems().forEach((it) => {
@@ -2356,6 +2416,7 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
         window.removeEventListener("blur", onWindowBlur)
         clearInterval(timesTimer)
         clearTimeout(toastTimer)
+        clearTimeout(nudgeTimer)
         canvasRO?.disconnect()
         root.innerHTML = ""
     }

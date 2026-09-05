@@ -24,6 +24,10 @@
 /* everything on the canvas lives in #world, which carries the pan/zoom
    transform; --inv (1/zoom) lets chrome counter-scale to a constant screen size */
 .world{position:absolute;left:0;top:0;transform-origin:0 0;--inv:1;}
+/* screen-space layer for chrome that must stay a constant size on screen
+   (selection box, handles, marquee, measurement guides). Not scaled, so a
+   1px border is exactly 1px at every zoom. */
+.overlay{position:absolute;inset:0;pointer-events:none;overflow:hidden;}
 
 /* ---- frames ---- */
 .frame{
@@ -95,11 +99,11 @@
 
 /* Figma-style selection overlay */
 .selbox{
-  position:absolute;border:calc(1px * var(--inv)) solid var(--accent);pointer-events:none;z-index:8;
+  position:absolute;border:1px solid var(--accent);pointer-events:none;z-index:8;
 }
 .selhandle{
   position:absolute;width:7px;height:7px;background:#fff;border:1.5px solid var(--accent);
-  border-radius:1px;transform:scale(var(--inv));
+  border-radius:1px;
 }
 .selhandle.tl{left:-4px;top:-4px;} .selhandle.tr{right:-4px;top:-4px;}
 .selhandle.bl{left:-4px;bottom:-4px;} .selhandle.br{right:-4px;bottom:-4px;}
@@ -114,14 +118,14 @@
 .seledge.t{top:-4px;} .seledge.b{bottom:-4px;}
 .seledge.l{left:-4px;} .seledge.r{right:-4px;}
 .selsize{
-  position:absolute;top:calc(100% + 6px);left:50%;transform:translateX(-50%) scale(var(--inv));transform-origin:top center;
+  position:absolute;top:calc(100% + 6px);left:50%;transform:translateX(-50%);
   background:var(--accent);color:#fff;font-size:10.5px;font-weight:500;
   padding:2px 7px;border-radius:4px;white-space:nowrap;font-variant-numeric:tabular-nums;
   user-select:none;
 }
 
 .marquee{
-  position:absolute;border:calc(1px * var(--inv)) solid #008FF0;background:rgba(0,143,240,.15);
+  position:absolute;border:1px solid #008FF0;background:rgba(0,143,240,.15);
   pointer-events:none;z-index:9;
 }
 
@@ -129,7 +133,7 @@
 .measure{position:absolute;left:0;top:0;pointer-events:none;z-index:12;}
 .measure-line{position:absolute;background:#f24822;pointer-events:none;}
 .measure-label{
-  position:absolute;transform:translate(-50%,-50%) scale(var(--inv));transform-origin:center;
+  position:absolute;transform:translate(-50%,-50%);
   background:#f24822;color:#fff;font-size:10px;font-weight:600;line-height:1;
   padding:2px 5px;border-radius:4px;white-space:nowrap;pointer-events:none;
   font-variant-numeric:tabular-nums;
