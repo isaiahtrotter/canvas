@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react"
 import { mountEditor, type EditorAPI, type Fill, type FillMode } from "../editor/engine"
 import ColorPicker from "./ColorPicker"
+import FontDropdown from "./FontDropdown"
 import "../editor/editor.css"
 
 interface EditorProps {
@@ -9,6 +10,12 @@ interface EditorProps {
 
 interface PickerState extends Fill {
     mode: FillMode
+    top: number
+}
+
+interface FontPickerState {
+    options: string[]
+    value: string
     top: number
 }
 
@@ -27,8 +34,10 @@ export function Editor({ cornerRadius = 0 }: EditorProps) {
     const ref = useRef<HTMLDivElement>(null)
     const wrapRef = useRef<HTMLDivElement>(null)
     const pickerRef = useRef<HTMLDivElement>(null)
+    const fontPickerRef = useRef<HTMLDivElement>(null)
     const api = useRef<EditorAPI | null>(null)
     const [picker, setPicker] = useState<PickerState | null>(null)
+    const [fontPicker, setFontPicker] = useState<FontPickerState | null>(null)
 
     useEffect(() => {
         const root = ref.current
@@ -36,6 +45,7 @@ export function Editor({ cornerRadius = 0 }: EditorProps) {
         api.current = mountEditor(root, {
             onFillOpen: (anchor, fill, mode) => {
                 const wrap = wrapRef.current!.getBoundingClientRect()
+                setFontPicker(null) // only one floating panel at a time
                 setPicker((p) => {
                     if (p) return null // clicking the swatch again closes it
                     if (mode === "selection") api.current?.beginFillGesture()
@@ -50,6 +60,14 @@ export function Editor({ cornerRadius = 0 }: EditorProps) {
                     if (mode !== p.mode) return null
                     return { ...p, ...fill }
                 })
+            },
+            onFontOpen: (anchor, options, value) => {
+                const wrap = wrapRef.current!.getBoundingClientRect()
+                setPicker(null) // only one floating panel at a time
+                setFontPicker((p) => (p ? null : { options, value, top: anchor.top - wrap.top }))
+            },
+            onFontChange: (value) => {
+                setFontPicker((p) => (p ? { ...p, value } : p))
             },
         })
         return () => {
@@ -87,6 +105,28 @@ export function Editor({ cornerRadius = 0 }: EditorProps) {
         }
     }, [!!picker])
 
+    // Same, for the font list — a separate effect since it's a separate
+    // floating panel with its own open state and anchor row.
+    useEffect(() => {
+        const row = ref.current?.querySelector<HTMLElement>("#fontRow")
+        row?.classList.toggle("open", !!fontPicker)
+        if (!fontPicker) return
+        const down = (e: PointerEvent) => {
+            const t = e.target as Node
+            if (fontPickerRef.current?.contains(t) || row?.contains(t)) return
+            setFontPicker(null)
+        }
+        const key = (e: KeyboardEvent) => {
+            if (e.key === "Escape") setFontPicker(null)
+        }
+        document.addEventListener("pointerdown", down, true)
+        document.addEventListener("keydown", key, true)
+        return () => {
+            document.removeEventListener("pointerdown", down, true)
+            document.removeEventListener("keydown", key, true)
+        }
+    }, [!!fontPicker])
+
     return (
         <div ref={wrapRef} style={{ position: "relative", width: "100%", height: "100%" }}>
             <div ref={ref} style={{ width: "100%", height: "100%" }} />
@@ -107,6 +147,26 @@ export function Editor({ cornerRadius = 0 }: EditorProps) {
                         onChange={(hex, alpha) => {
                             setPicker((p) => (p ? { ...p, hex, alpha } : p))
                             api.current?.setFill(hex, alpha)
+                        }}
+                    />
+                </div>
+            )}
+            {fontPicker && (
+                <div
+                    ref={fontPickerRef}
+                    style={{
+                        position: "absolute",
+                        right: "calc(var(--right-w, 230px) + 8px)", // just left of the (resizable) sidebar
+                        top: Math.max(8, Math.min(fontPicker.top, (wrapRef.current?.clientHeight ?? 600) - 220)),
+                        zIndex: 40,
+                    }}
+                >
+                    <FontDropdown
+                        options={fontPicker.options}
+                        value={fontPicker.value}
+                        onSelect={(font) => {
+                            api.current?.setFont(font)
+                            setFontPicker(null) // a font list closes once you pick one
                         }}
                     />
                 </div>

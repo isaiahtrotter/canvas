@@ -53,12 +53,19 @@ export interface EditorHooks {
     onFillOpen?: (anchor: DOMRect, fill: Fill, mode: FillMode) => void
     /** Selection (or, in background mode, the background color) changed while the host may be showing a picker. */
     onFillChange?: (fill: Fill, mode: FillMode) => void
+    /** The font row was clicked: open a floating list of fonts anchored to `anchor`. `value` is the
+     *  selection's shared font, or "__mixed" when the selected text layers use different fonts. */
+    onFontOpen?: (anchor: DOMRect, options: string[], value: string) => void
+    /** The selection's font changed while the host may be showing the font list. */
+    onFontChange?: (value: string) => void
 }
 export interface EditorAPI {
     /** Apply a fill to every selected layer. The first call after beginFillGesture() logs one undo step. */
     setFill: (hex: string, alpha: number) => void
     beginFillGesture: () => void
     endFillGesture: () => void
+    /** Apply a font to every selected text layer. One undo step per call. */
+    setFont: (font: string) => void
     destroy: () => void
 }
 
@@ -2971,31 +2978,47 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
         },
     }
 
+    // shared by the font row's button and the host's floating list
+    const FONTS = ["Inter", "PP Mondwest", "PP NeueBit", "Helvetica Neue", "Georgia"]
+    function currentFontValue(): string {
+        const sel = selectedTextItems()
+        if (!sel.length) return FONTS[0]
+        const same = sel.every((it) => it.font === sel[0].font)
+        return same ? sel[0].font : "__mixed"
+    }
+    function setFont(font: string) {
+        const sel = selectedTextItems()
+        if (!sel.length || sel.every((it) => it.font === font)) return
+        pushHistory()
+        sel.forEach((it) => (it.font = font))
+        emit()
+    }
+
     function buildPanel() {
-        const fontDD = makeSelect(
-            ["Inter", "PP Mondwest", "PP NeueBit", "Helvetica Neue", "Georgia"],
-            (font) => {
-                const sel = selectedTextItems()
-                if (!sel.length || sel.every((it) => it.font === font)) return
-                pushHistory()
-                sel.forEach((it) => (it.font = font))
-                emit()
-            }
-        )
-        const fontSel = fontDD.querySelector<HTMLSelectElement>("select")
-        const mixedOpt = document.createElement("option")
-        mixedOpt.value = "__mixed"
-        mixedOpt.textContent = "Mixed"
-        mixedOpt.disabled = true
-        mixedOpt.hidden = true
-        fontSel.appendChild(mixedOpt)
+        // the font row opens a floating list next to the sidebar (see
+        // onFontOpen/onFontChange), like the fill swatch opens the color
+        // picker — not a native <select>, so each option can render in its
+        // own typeface. The button shows the current font in that font too.
+        const fontWrap = document.createElement("div")
+        fontWrap.className = "dd-wrap"
+        const fontBtn = document.createElement("button")
+        fontBtn.type = "button"
+        fontBtn.className = "dd"
+        fontBtn.id = "fontRow"
+        fontBtn.tabIndex = -1
+        fontWrap.appendChild(fontBtn)
         function updateFontDD() {
             const sel = selectedTextItems()
-            fontSel.disabled = !sel.length
-            if (!sel.length) return
-            const same = sel.every((it) => it.font === sel[0].font)
-            fontSel.value = same ? sel[0].font : "__mixed"
+            fontBtn.disabled = !sel.length
+            const v = currentFontValue()
+            fontBtn.textContent = v === "__mixed" ? "Mixed" : v
+            fontBtn.style.fontFamily = v === "__mixed" ? "" : v
+            if (hooks.onFontChange) hooks.onFontChange(v)
         }
+        fontBtn.addEventListener("click", () => {
+            if (!hooks.onFontOpen || fontBtn.disabled) return
+            hooks.onFontOpen(fontBtn.getBoundingClientRect(), FONTS, currentFontValue())
+        })
 
         const row = document.createElement("div")
         row.className = "proprow"
@@ -3016,7 +3039,6 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
                 emit()
             }
         )
-        weightDD.classList.add("grow")
         const weightSel = weightDD.querySelector<HTMLSelectElement>("select")
         const mixedWeight = document.createElement("option")
         mixedWeight.value = "__mixed"
@@ -3281,7 +3303,7 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
                 setOpen(false)
         })
 
-        panelGroup.append(fontDD, row, drawer, spacingRow)
+        panelGroup.append(fontWrap, row, drawer, spacingRow)
         mountWidget()
         updateField()
         setOpen(true)
@@ -3633,6 +3655,7 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
             fillGesture = false
             fillPre = null
         },
+        setFont,
         destroy,
     }
 }

@@ -17,6 +17,11 @@
   --text-4:#b0b0ae;       /* disabled */
   --shadow:rgba(0,0,0,.06);
   --canvas-default:#ededed;
+  /* value fields in the right sidebar (position, fill, font, size, spacing) —
+     a separate token from --surface-2 so darkening it doesn't also darken
+     every other track/button that shares that color */
+  --input-bg:var(--surface-2);
+  --input-bg-hover:var(--surface-3);
   color-scheme:light;
 }
 :root.dark{
@@ -31,6 +36,10 @@
   --text-4:#666666;
   --shadow:rgba(0,0,0,.4);
   --canvas-default:#1e1e1e;
+  /* a little lighter than --surface-2 so sidebar fields read clearly
+     against the panel instead of blending into it */
+  --input-bg:#454545;
+  --input-bg-hover:#505050;
   color-scheme:dark;
 }
 
@@ -542,7 +551,7 @@
 .alignbtn svg{display:block;}
 
 .pi{
-  display:flex;align-items:center;background:var(--surface-2);border-radius:10px;
+  display:flex;align-items:center;background:var(--input-bg);border-radius:10px;
   flex:1;min-width:0;overflow:hidden;
 }
 .pi .pi-key{font-size:10px;font-weight:700;color:var(--text-3);width:16px;text-align:center;flex-shrink:0;user-select:none;margin-left:3px;}
@@ -552,16 +561,16 @@
   font-variant-numeric:tabular-nums;
 }
 .pi input:disabled{color:var(--text-4);}
-.pi:has(input:focus){background:var(--surface-3);}
+.pi:has(input:focus){background:var(--input-bg-hover);}
 
 .fillrow{
-  display:flex;align-items:center;gap:8px;background:var(--surface-2);border-radius:10px;padding:7px 10px;
+  display:flex;align-items:center;gap:8px;background:var(--input-bg);border-radius:10px;padding:7px 10px;
   width:100%;border:none;font-family:inherit;cursor:pointer;text-align:left;transition:background .12s, opacity .12s;
 }
-.fillrow:hover{background:var(--surface-3);}
-.fillrow.open{background:var(--surface-3);}
+.fillrow:hover{background:var(--input-bg-hover);}
+.fillrow.open{background:var(--input-bg-hover);}
 .fillrow.disabled{opacity:.5;cursor:default;}
-.fillrow.disabled:hover{background:var(--surface-2);}
+.fillrow.disabled:hover{background:var(--input-bg);}
 .fillrow.mixed .hex{color:var(--text-3);font-style:italic;}
 .fillrow .swatch{width:16px;height:16px;border-radius:4px;background:var(--text);border:1px solid var(--line);flex-shrink:0;}
 .fillrow .hex{font-size:12px;color:var(--text);font-variant-numeric:tabular-nums;}
@@ -570,7 +579,6 @@
 .proprow{display:flex;gap:6px;}
 
 .dd-wrap{position:relative;flex:1;min-width:0;}
-.dd-wrap.grow{flex:1.15;}
 .dd-wrap::after{
   content:'';position:absolute;right:8px;top:50%;width:6px;height:6px;
   border-right:1.5px solid var(--text-3);border-bottom:1.5px solid var(--text-3);
@@ -578,19 +586,19 @@
 }
 .dd{
   -webkit-appearance:none;appearance:none;
-  width:100%;background:var(--surface-2);border:none;border-radius:10px;
+  width:100%;background:var(--input-bg);border:none;border-radius:10px;
   padding:9px 20px 9px 10px;font-family:inherit;font-size:12px;color:var(--text);
   cursor:pointer;text-overflow:ellipsis;
 }
-.dd:hover{background:var(--surface-3);}
+.dd:hover, .dd.open{background:var(--input-bg-hover);}
 .dd:focus{outline:2px solid var(--accent);outline-offset:1px;}
 .dd:disabled{color:var(--text-4);cursor:default;}
-.dd:disabled:hover{background:var(--surface-2);}
+.dd:disabled:hover{background:var(--input-bg);}
 .dd-wrap:has(.dd:disabled)::after{border-color:var(--text-4);}
 
 /* size field: input + white seam + chevron */
 .sizewrap{position:relative;flex:1;min-width:84px;}
-.sizefield{display:flex;align-items:stretch;background:var(--surface-2);border-radius:10px;overflow:hidden;}
+.sizefield{display:flex;align-items:stretch;background:var(--input-bg);border-radius:10px;overflow:hidden;}
 .sizeinput{
   flex:1;min-width:0;border:none;background:transparent;
   font-family:inherit;font-size:12px;color:var(--text);
@@ -598,12 +606,12 @@
 }
 .sizeinput.mixed{color:var(--text-3);font-style:italic;}
 .sizeinput:disabled{color:var(--text-4);}
-.sizeinput:focus{background:var(--surface-3);}
+.sizeinput:focus{background:var(--input-bg-hover);}
 .sizechevron{
   flex-shrink:0;width:26px;border:none;background:transparent;cursor:pointer;
   display:flex;align-items:center;justify-content:center;border-left:1px solid var(--surface);
 }
-.sizechevron:hover{background:var(--surface-3);}
+.sizechevron:hover{background:var(--input-bg-hover);}
 .sizechevron:disabled{cursor:default;opacity:.4;}
 .sizechevron:disabled:hover{background:transparent;}
 .sizechevron .chev{
