@@ -1439,18 +1439,28 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
     // the three alignment lines of a box along one axis: start, center, end
     const linesOf = (r: Rect, axis: "x" | "y") =>
         axis === "x" ? [r.x, r.x + r.w / 2, r.x + r.w] : [r.y, r.y + r.h / 2, r.y + r.h]
-    /* Given the moving box (base + current delta) and everything that isn't
-       moving, find the smallest edge/center-to-edge/center gap per axis within
+    /* Given the moving box (base + current delta) and the layers it may align
+       with, find the smallest edge/center-to-edge/center gap per axis within
        the snap radius. Returns the corrected delta plus one guide per snapped
-       axis, spanning both the moving box and the layer it snapped to. */
+       axis, spanning both the moving box and the layer it snapped to.
+
+       Only siblings count. Inside a frame (`context`), that's the frame
+       itself and the other text it holds — nothing outside it. At the top
+       level (no context), it's the frames and the loose text — never the
+       text tucked inside a frame. */
     function snapToGuides(
         base: Rect,
         dx: number,
         dy: number,
         moving: Set<number>,
-        locked: "x" | "y" | null
+        locked: "x" | "y" | null,
+        context: FrameItem | null
     ): { dx: number; dy: number; guides: SnapGuide[] } | null {
-        const targets = items.filter((it) => !moving.has(it.id)).map((it) => itemBounds(it))
+        const sibling = (it: Item) =>
+            context
+                ? it.id === context.id || (isText(it) && it.parent === context.id)
+                : isFrame(it) || (isText(it) && it.parent == null)
+        const targets = items.filter((it) => !moving.has(it.id) && sibling(it)).map((it) => itemBounds(it))
         if (!targets.length) return null
         const thr = SNAP_PX / view.z
         const guides: SnapGuide[] = []
@@ -1862,7 +1872,14 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
                layer's matching edge or center, and a guide line spans the two
                while the snap holds. The nearest candidate wins per axis; an
                axis Shift has locked to zero is left alone. */
-            const snapped = moved && baseBounds ? snapToGuides(baseBounds, dx, dy, movingIds, shiftAxis) : null
+            // frames are top-level, so a drag that includes one aligns at the
+            // root; a text-only drag aligns within whichever frame the pointer
+            // is over right now (membership follows the pointer the same way)
+            const snapContext = draggedFrames.size
+                ? null
+                : frameAt({ x: startWorld.x + dx, y: startWorld.y + dy }, draggedFrames)
+            const snapped =
+                moved && baseBounds ? snapToGuides(baseBounds, dx, dy, movingIds, shiftAxis, snapContext) : null
             if (snapped) {
                 dx = snapped.dx
                 dy = snapped.dy
