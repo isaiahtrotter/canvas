@@ -1653,10 +1653,15 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
         document.addEventListener("pointerup", up)
     }
 
-    /* frame tool: drag to draw; a plain click drops a default-sized frame */
+    /* frame tool: drag to draw; a plain click drops a default-sized frame.
+       While drawing, the draft looks like the frame it's about to become:
+       its name and timestamp above it, and the selection box with the live
+       size badge around it. */
     function startFrameDraw(e: PointerEvent) {
         const s = toWorld(e.clientX, e.clientY)
         let draft: HTMLDivElement | null = null
+        let draftBox: HTMLDivElement | null = null
+        let draftSize: HTMLDivElement | null = null
         let r: { x: number; y: number; w: number; h: number } | null = null
         function mv(ev: PointerEvent) {
             const p = toWorld(ev.clientX, ev.clientY)
@@ -1666,7 +1671,23 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
             ) {
                 draft = document.createElement("div")
                 draft.className = "frame-draft"
+                const label = document.createElement("div")
+                label.className = "flabel"
+                const name = document.createElement("span")
+                name.className = "fname"
+                name.textContent = "Frame " + (frameCount + 1) // the name it will get
+                const time = document.createElement("span")
+                time.className = "ftime"
+                time.textContent = relTime(Date.now())
+                label.append(name, time)
+                draft.appendChild(label)
                 world.appendChild(draft)
+                draftBox = document.createElement("div")
+                draftBox.className = "selbox live"
+                draftSize = document.createElement("div")
+                draftSize.className = "selsize"
+                draftBox.appendChild(draftSize)
+                overlay.appendChild(draftBox)
             }
             if (!draft) return
             r = {
@@ -1679,11 +1700,17 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
             draft.style.top = r.y + "px"
             draft.style.width = r.w + "px"
             draft.style.height = r.h + "px"
+            if (draftBox) {
+                if (!draftBox.isConnected) overlay.appendChild(draftBox) // a redraw may have cleared .selbox nodes
+                placeScreenRect(draftBox, r)
+                if (draftSize) draftSize.textContent = Math.round(r.w) + " × " + Math.round(r.h)
+            }
         }
         function up() {
             document.removeEventListener("pointermove", mv)
             document.removeEventListener("pointerup", up)
             if (draft) draft.remove()
+            if (draftBox) draftBox.remove()
             const box =
                 r && r.w >= 8 && r.h >= 8 ? r : { x: s.x, y: s.y, w: 200, h: 150 }
             pushHistory()
