@@ -144,10 +144,11 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
        restored snapshot keeps the timestamps it was saved with. */
     let restoring = false
     let carryingFrameDrag = false // true only while a frame-drag's own emit() is diffing
-    // ids of just-duplicated text (option/ctrl-drag) that haven't been dropped
-    // yet: touchParentFrames() ignores them entirely, so the frame they land
-    // in is only stamped at release, not the instant the copy appears
-    const duplicatingIds = new Set<number>()
+    // true only while an option/ctrl-drag's final emit() is settling: the
+    // dragged item can only end up in one frame, so its entering-bump fires
+    // as normal but the frame it happened to pass through/leave along the
+    // way does not also light up
+    let suppressLeaveBump = false
     const lastText = new Map<number, { sig: string; parent: number | null }>()
     function textSig(it: TextItem) {
         return [it.x, it.y, it.text, it.size, it.font, it.weight, it.fill, it.alpha, lineHeightOf(it), letterSpacingOf(it)].join("|")
@@ -157,7 +158,6 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
         const seen = new Set<number>()
         items.filter(isText).forEach((t) => {
             seen.add(t.id)
-            if (duplicatingIds.has(t.id)) return // still mid-drag — settled (and stamped) at drop
             const sig = textSig(t)
             const parent = t.parent ?? null
             const prev = lastText.get(t.id)
@@ -168,7 +168,8 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
                         if (f) f.updatedAt = now
                     }
                     bump(containingFrame(t))
-                    if (prev && prev.parent !== parent) bump(frameById(prev.parent)) // the frame it left
+                    if (prev && prev.parent !== parent && !suppressLeaveBump)
+                        bump(frameById(prev.parent)) // the frame it left
                 }
                 lastText.set(t.id, { sig, parent })
             }
@@ -1644,7 +1645,6 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
         const preDrag = snapshot() // pre-state: pushed once if the gesture actually moves anything
         let moved = false
         let duplicated = false
-        const duplicatedIds: number[] = [] // this gesture's copies — unmarked as "settled" at drop
         // .dragging lifts the moving frame above other frames and its carried
         // text above the frame (see CSS). emit() re-renders the DOM, so this
         // is re-applied after the mid-drag duplicate, not just at the start.
@@ -1677,11 +1677,13 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
                     .forEach((s) => {
                         const c = duplicateItem(s.it, s.x, s.y) as TextItem
                         c.parent = s.parent == null ? null : copies.get(s.parent) ?? s.parent
-                        // the copy already sits in its frame, but that frame's
-                        // timestamp shouldn't move until the gesture is actually
-                        // released — this emit() only needs to make it visible
-                        duplicatingIds.add(c.id)
-                        duplicatedIds.push(c.id)
+                        // the copy left behind isn't itself a content change —
+                        // it's exactly what was already there — so pre-seed its
+                        // tracking as already-settled rather than letting
+                        // touchParentFrames see it as new and bump its frame.
+                        // (A genuine future edit to this layer still tracks
+                        // normally from here on.)
+                        lastText.set(c.id, { sig: textSig(c), parent: c.parent ?? null })
                     })
                 emit()
                 markDragging(true) // the re-render dropped the class
@@ -1717,11 +1719,12 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
                 // below bump the frame's timestamp for text that just came along
                 const draggedFrame = starts.some((s) => isFrame(s.it))
                 if (draggedFrame) carryingFrameDrag = true
-                // the gesture is releasing now — a duplicate's frame (if any)
-                // is stamped by this emit(), not the one that created the copy
-                duplicatedIds.forEach((id) => duplicatingIds.delete(id))
+                // the dragged item can only land in one frame — if a copy was
+                // left behind along the way, don't also light up whatever it left
+                if (duplicated) suppressLeaveBump = true
                 emit()
                 carryingFrameDrag = false
+                suppressLeaveBump = false
             }
         }
         document.addEventListener("pointermove", mv)
