@@ -157,6 +157,36 @@
 .titem[contenteditable="true"]::selection{background:color-mix(in srgb, var(--sel-blue) 16%, transparent);}
 .titem[contenteditable="true"]::-moz-selection{background:color-mix(in srgb, var(--sel-blue) 16%, transparent);}
 
+/* ---- heatmap mode (Shift+H): canvas only, the panels are untouched. The
+   per-node colors come from --heat / --heat-frame set in applyHeat(); the
+   canvas background and label colors come from applyBg(). Transitions are
+   scoped to .heat-transition (added for 350ms around a toggle) so ordinary
+   fill changes never animate. ---- */
+.canvas.heat-transition{transition:background-color .3s ease-out;}
+.canvas.heat-transition .world{transition:filter .3s ease-out;}
+.canvas.heat-transition .frame{transition:background-color .3s ease-out;}
+.canvas.heat-transition .titem, .canvas.heat-transition .fname, .canvas.heat-transition .ftime{transition:color .3s ease-out;}
+.canvas.heat .world{filter:blur(.8px);}
+.canvas.heat .frame{background:var(--heat-frame, #1a0533) !important;}
+.canvas.heat .titem{color:var(--heat, #fbea6a) !important;}
+/* the key: gradient bar plus labels at their heat positions, left-centered */
+.heatkey{
+  position:absolute;left:12px;top:50%;transform:translateY(-50%);z-index:20;
+  display:flex;gap:10px;align-items:stretch;height:220px;
+  opacity:0;pointer-events:none;transition:opacity .3s ease-out;
+}
+.heatkey.on{opacity:1;}
+.heatkey .bar{width:10px;border-radius:5px;box-shadow:0 0 0 1px rgba(255,255,255,.14);}
+.heatkey .ticks{position:relative;width:46px;}
+.heatkey .tick{
+  position:absolute;left:0;transform:translateY(-50%);
+  font-size:10px;line-height:1;white-space:nowrap;color:#efe4ff;
+  text-shadow:0 1px 2px rgba(0,0,0,.6);
+}
+.heatkey .tick::before{
+  content:'';position:absolute;left:-10px;top:50%;width:6px;height:1px;background:rgba(255,255,255,.45);
+}
+
 /* Figma-style selection overlay */
 .selbox{
   position:absolute;border:1px solid var(--sel-blue);pointer-events:none;z-index:8;

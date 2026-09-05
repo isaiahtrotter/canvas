@@ -94,6 +94,7 @@ export const MARKUP = `
               <div class="k">Edit text / rename frame</div><div>double-click</div>
               <div class="k">Undo / redo</div><div><kbd>⌘</kbd><kbd>Z</kbd> / <kbd>⇧</kbd><kbd>⌘</kbd><kbd>Z</kbd></div>
               <div class="k">Toggle timestamps</div><div><kbd>⇧</kbd><kbd>T</kbd></div>
+              <div class="k">Heatmap of recent edits</div><div><kbd>⇧</kbd><kbd>H</kbd></div>
               <div class="k">Settings</div><div><kbd>⌘</kbd><kbd>,</kbd></div>
               <div class="k">Hide / show sidebars</div><div><kbd>⌘</kbd><kbd>\\</kbd></div>
             </div>
