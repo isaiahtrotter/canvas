@@ -2005,6 +2005,14 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
                 if (frameHolds(f, t)) doomed.add(t.id)
             })
         })
+        // a deleted item's frame counts as edited too — unless the frame is
+        // being deleted along with it
+        const now = Date.now()
+        items.forEach((it) => {
+            if (!doomed.has(it.id)) return
+            const f = containingFrame(it)
+            if (f && !doomed.has(f.id)) f.updatedAt = now
+        })
         for (let i = items.length - 1; i >= 0; i--) {
             if (doomed.has(items[i].id)) items.splice(i, 1)
         }
