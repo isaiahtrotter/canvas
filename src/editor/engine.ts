@@ -384,16 +384,33 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
     const GRID_FROM = 10 // the pixel grid appears from 1000%
     const view = { x: 0, y: 0, z: 1 }
     const zoomVal = root.querySelector<HTMLElement>("#zoomVal")
-    const grid = root.querySelector<HTMLElement>("#grid")
+    const grid = root.querySelector<HTMLCanvasElement>("#grid")
+    /* One line per integer world coordinate, each placed at its exact screen
+       position (rounded to a device pixel) so frame edges — which sit on
+       integer coordinates — land on grid lines at any zoom, with no drift. */
     function applyGrid() {
         if (!grid) return
         const on = prefs.grid && view.z >= GRID_FROM
         grid.classList.toggle("on", on)
         if (!on) return
-        // one cell per world unit, anchored to the world origin so lines sit
-        // exactly on integer coordinates
-        grid.style.backgroundSize = `${view.z}px ${view.z}px`
-        grid.style.backgroundPosition = `${view.x}px ${view.y}px`
+        const dpr = window.devicePixelRatio || 1
+        const W = canvas.clientWidth,
+            H = canvas.clientHeight
+        const pw = Math.round(W * dpr),
+            ph = Math.round(H * dpr)
+        if (grid.width !== pw || grid.height !== ph) {
+            grid.width = pw
+            grid.height = ph
+        }
+        const ctx = grid.getContext("2d")
+        if (!ctx) return
+        ctx.clearRect(0, 0, pw, ph)
+        ctx.fillStyle = getComputedStyle(canvas).getPropertyValue("--grid").trim() || "rgba(0,0,0,.09)"
+        const z = view.z
+        for (let k = Math.ceil(-view.x / z); k <= Math.floor((W - view.x) / z); k++)
+            ctx.fillRect(Math.round((view.x + k * z) * dpr), 0, 1, ph)
+        for (let k = Math.ceil(-view.y / z); k <= Math.floor((H - view.y) / z); k++)
+            ctx.fillRect(0, Math.round((view.y + k * z) * dpr), pw, 1)
     }
     function applyView() {
         world.style.transform = `translate(${view.x}px, ${view.y}px) scale(${view.z})`
@@ -417,6 +434,7 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
             ? new ResizeObserver(() => {
                   updateMinimap()
                   renderSelectionOverlay()
+                  applyGrid() // the bitmap is sized to the canvas
               })
             : null
     canvasRO?.observe(canvas)
@@ -2438,6 +2456,7 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
             canvas.style.setProperty("--ftime", "#b9a6d9")
             canvas.style.setProperty("--grid", "rgba(255,255,255,.08)")
             canvas.style.setProperty("--accent", accentColor(hexToRgb(HEAT_BG)))
+            applyGrid()
             return
         }
         canvas.style.backgroundColor = rgbaCss(bg.hex, bg.alpha)
@@ -2447,6 +2466,7 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
         canvas.style.setProperty("--ftime", p.time)
         canvas.style.setProperty("--grid", p.grid)
         canvas.style.setProperty("--accent", accentColor(seen))
+        applyGrid()
     }
     // shared fill of the selection, or null when empty / mixed
     function selectionFill(): { fill: Fill | null; mixed: boolean } {

@@ -61,14 +61,12 @@
    1px border is exactly 1px at every zoom. */
 .overlay{position:absolute;inset:0;pointer-events:none;overflow:hidden;}
 /* pixel grid: one cell per world unit, drawn in screen space over everything
-   once zoomed far enough in (see GRID_FROM). Color comes from #canvas
+   once zoomed far enough in (see GRID_FROM). It's a <canvas> painted in
+   applyGrid(), not a repeating background: the browser snaps background
+   tiles to whole pixels, which put the lines a few px off the frame edges
+   and let the error creep across the screen. Color comes from #canvas
    (--grid) so it stays faint on light and dark backgrounds alike. */
-.grid{
-  position:absolute;inset:0;pointer-events:none;z-index:1;display:none;
-  background-image:
-    linear-gradient(to right, var(--grid, rgba(0,0,0,.09)) 1px, transparent 1px),
-    linear-gradient(to bottom, var(--grid, rgba(0,0,0,.09)) 1px, transparent 1px);
-}
+.grid{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:1;display:none;}
 .grid.on{display:block;}
 
 /* ---- frames ---- */

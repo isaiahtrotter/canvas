@@ -8,7 +8,7 @@ export const MARKUP = `
     <div class="canvas-wrap">
       <button class="panelbtn reveal reveal-left" id="showLeft" type="button" aria-label="Show left sidebar" title="Show sidebar"><svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.3"><rect x="1.5" y="2.5" width="11" height="9" rx="2"/><path d="M5.5 2.5v9"/></svg></button>
       <button class="panelbtn reveal reveal-right" id="showRight" type="button" aria-label="Show right sidebar" title="Show sidebar"><svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.3"><rect x="1.5" y="2.5" width="11" height="9" rx="2"/><path d="M8.5 2.5v9"/></svg></button>
-      <div class="canvas" id="canvas"><div class="world" id="world"></div><div class="overlay" id="overlay"><div class="grid" id="grid"></div></div></div>
+      <div class="canvas" id="canvas"><div class="world" id="world"></div><div class="overlay" id="overlay"><canvas class="grid" id="grid"></canvas></div></div>
       <div class="toolpill" role="toolbar" aria-label="Tools">
         <button data-tool="move" class="active" title="Move (V)" aria-label="Move tool" tabindex="-1">
           <svg width="14" height="14" viewBox="0 0 14 14" fill="currentColor"><path d="M3.2 1.8l8.6 6.3-3.9.6 2.2 4-1.7.9-2.2-4-2.9 2.6z"/></svg>
