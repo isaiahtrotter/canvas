@@ -188,22 +188,28 @@
   content:'';position:absolute;inset:0;pointer-events:none;z-index:-1;opacity:0;
 }
 .canvas.heat .frame{background:transparent !important;}
-/* the fill is a solid heat color (so it can transition) with a translucent
-   sheen band on top that travels top-left → bottom-right like a slow wave;
-   the band sits in the middle of an oversized gradient so there's a pause
-   between passes */
+/* the fill is a solid heat color (so it can transition) under a moving mesh:
+   four soft radial blobs (two lighter, two darker) on tiling 200% layers,
+   each drifting top-left → bottom-right at its own speed and angle so the
+   overlap shifts like a mesh gradient rather than a stripe. Every layer's
+   travel is a whole number of its tile period, so the loop is seamless. */
 .canvas.heat .frame::before{
   background-color:var(--heat-frame, #1a0533);
-  background-image:linear-gradient(135deg,
-    transparent 0%, transparent 36%,
-    rgba(255,255,255,.10) 44%, rgba(255,255,255,.22) 50%, rgba(255,255,255,.10) 56%,
-    transparent 64%, transparent 100%);
-  background-size:300% 300%;
+  background-image:
+    radial-gradient(ellipse 30% 24% at 30% 35%, rgba(255,255,255,.30), transparent 100%),
+    radial-gradient(ellipse 26% 30% at 70% 65%, rgba(0,0,0,.26), transparent 100%),
+    radial-gradient(ellipse 22% 22% at 60% 25%, rgba(255,255,255,.18), transparent 100%),
+    radial-gradient(ellipse 28% 20% at 25% 75%, rgba(0,0,0,.16), transparent 100%);
+  background-size:200% 200%;
+  background-repeat:repeat;
   filter:blur(calc(.8px * var(--inv)));
-  animation:heatwave 7s linear infinite;
-  animation-delay:calc(var(--phase, 0) * -7s);
+  animation:heatmesh 12s linear infinite;
+  animation-delay:calc(var(--phase, 0) * -12s);
 }
-@keyframes heatwave{from{background-position:0% 0%;}to{background-position:100% 100%;}}
+@keyframes heatmesh{
+  from{background-position:0% 0%, 0% 0%, 0% 0%, 0% 0%;}
+  to{background-position:200% 200%, 400% 400%, 200% 400%, 400% 200%;}
+}
 .canvas.heat .frame::after{
   box-shadow:0 0 calc(34px * var(--inv)) calc(8px * var(--inv)) var(--heat-frame, #1a0533);
   animation:heatglow 3.6s ease-in-out infinite;
