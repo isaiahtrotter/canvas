@@ -2543,7 +2543,7 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
        better than a dark one. (A softer third tier for very light
        backgrounds was tried and dropped — the timestamp washed out.) */
     const LABEL_PALETTES = {
-        dark: { name: "#1c1c1c", time: "#5a5a5a", grid: "rgba(0,0,0,.11)" },
+        dark: { name: "#1c1c1c", time: "#707070", grid: "rgba(0,0,0,.11)" },
         pale: { name: "#f4f4f4", time: "#a8a8a8", grid: "rgba(255,255,255,.13)" },
     }
     /* One light/dark call for the whole canvas, decided from the background's
