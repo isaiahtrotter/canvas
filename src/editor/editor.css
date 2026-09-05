@@ -28,8 +28,10 @@
 /* ---- frames ---- */
 .frame{
   position:absolute;background:#fff;
-  box-shadow:0 1px 3px rgba(0,0,0,.06);
 }
+/* the frame actively being dragged (a duplicate included) rises above
+   the rest so it never gets visually lost under a frame it passes over */
+.frame.dragging{z-index:5;}
 .flabel{
   position:absolute;left:0;bottom:100%;margin-bottom:6px;
   display:flex;align-items:baseline;gap:7px;white-space:nowrap;
@@ -47,7 +49,7 @@
 /* drawing a frame previews as a real (white) frame, not a selection */
 .frame-draft{
   position:absolute;background:#fff;
-  box-shadow:0 1px 3px rgba(0,0,0,.06);pointer-events:none;
+  pointer-events:none;
 }
 
 /* ---- minimap ---- */

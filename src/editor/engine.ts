@@ -542,47 +542,49 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
         label.style.top = (y1 + y2) / 2 + "px"
         container.appendChild(label)
     }
-    // two boxes side by side or stacked: the gap line for whichever axis
-    // they don't overlap on (a la Figma's "spacing to sibling")
-    function measureGap(container: HTMLElement, a, b) {
-        const overlapX = Math.max(a.x, b.x) < Math.min(a.x + a.w, b.x + b.w)
-        const overlapY = Math.max(a.y, b.y) < Math.min(a.y + a.h, b.y + b.h)
+    // Guides run from the middle of the selection's facing side straight to
+    // the hovered target — purely a function of the two boxes' positions, so
+    // they hold still as the mouse moves around inside the hovered target
+    // instead of tracking the cursor.
+    function measureTo(container: HTMLElement, sel, target) {
+        const selCx = sel.x + sel.w / 2,
+            selCy = sel.y + sel.h / 2
+        const overlapX = Math.max(sel.x, target.x) < Math.min(sel.x + sel.w, target.x + target.w)
+        const overlapY = Math.max(sel.y, target.y) < Math.min(sel.y + sel.h, target.y + target.h)
         if (!overlapY) {
-            const [upper, lower] = a.y < b.y ? [a, b] : [b, a]
-            const os = Math.max(a.x, b.x),
-                oe = Math.min(a.x + a.w, b.x + b.w)
-            const cx = oe > os ? (os + oe) / 2 : (a.x + a.w / 2 + b.x + b.w / 2) / 2
-            addMeasureLine(container, cx, upper.y + upper.h, cx, lower.y, lower.y - (upper.y + upper.h))
+            // target sits above or below: vertical line from the selection's
+            // top/bottom-center to the target's facing edge
+            const below = target.y >= sel.y + sel.h
+            const y1 = below ? sel.y + sel.h : sel.y
+            const y2 = below ? target.y : target.y + target.h
+            addMeasureLine(container, selCx, y1, selCx, y2, y2 - y1)
         }
         if (!overlapX) {
-            const [left, right] = a.x < b.x ? [a, b] : [b, a]
-            const os = Math.max(a.y, b.y),
-                oe = Math.min(a.y + a.h, b.y + b.h)
-            const cy = oe > os ? (os + oe) / 2 : (a.y + a.h / 2 + b.y + b.h / 2) / 2
-            addMeasureLine(container, left.x + left.w, cy, right.x, cy, right.x - (left.x + left.w))
+            const right = target.x >= sel.x + sel.w
+            const x1 = right ? sel.x + sel.w : sel.x
+            const x2 = right ? target.x : target.x + target.w
+            addMeasureLine(container, x1, selCy, x2, selCy, x2 - x1)
+        }
+        if (overlapX && overlapY) {
+            // the target surrounds (or straddles) the selection, e.g. hovering
+            // its containing frame: measure to whichever pair of its edges —
+            // one vertical, one horizontal — sit nearest the selection's center
+            const edgeV = selCx - target.x <= target.x + target.w - selCx ? "l" : "r"
+            const tx = edgeV === "l" ? target.x : target.x + target.w
+            addMeasureLine(container, tx, selCy, selCx, selCy, selCx - tx)
+            const edgeH = selCy - target.y <= target.y + target.h - selCy ? "t" : "b"
+            const ty = edgeH === "t" ? target.y : target.y + target.h
+            addMeasureLine(container, selCx, ty, selCx, selCy, selCy - ty)
         }
     }
-    // distance from the selection to whichever pair of the frame's edges
-    // (one vertical, one horizontal) the cursor sits nearest to
-    function measureToFrame(container: HTMLElement, sel, frame, mouse: { x: number; y: number }) {
-        const edgeV = mouse.x - frame.x <= frame.x + frame.w - mouse.x ? "l" : "r"
-        const edgeH = mouse.y - frame.y <= frame.y + frame.h - mouse.y ? "t" : "b"
-        const frameVX = edgeV === "l" ? frame.x : frame.x + frame.w
-        const selVX = edgeV === "l" ? sel.x : sel.x + sel.w
-        addMeasureLine(container, frameVX, mouse.y, selVX, mouse.y, selVX - frameVX)
-        const frameHY = edgeH === "t" ? frame.y : frame.y + frame.h
-        const selHY = edgeH === "t" ? sel.y : sel.y + sel.h
-        addMeasureLine(container, mouse.x, frameHY, mouse.x, selHY, selHY - frameHY)
-    }
-    function updateMeasure(hovered: Item | null | undefined, mouse: { x: number; y: number }) {
+    function updateMeasure(hovered: Item | null | undefined) {
         clearMeasure()
         if (!altDown || !hovered || selection.has(hovered.id)) return
         const sel = selectionBounds()
         if (!sel) return
         measureBox = document.createElement("div")
         measureBox.className = "measure"
-        if (isFrame(hovered)) measureToFrame(measureBox, sel, itemBounds(hovered), mouse)
-        else measureGap(measureBox, sel, itemBounds(hovered))
+        measureTo(measureBox, sel, itemBounds(hovered))
         world.appendChild(measureBox)
     }
     canvas.addEventListener("pointermove", (e: PointerEvent) => {
@@ -594,7 +596,7 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
         }
         const t = (e.target as HTMLElement).closest<HTMLElement>(".titem, .frame")
         const hovered = t ? items.find((it) => it.id === Number(t.dataset.id)) : null
-        updateMeasure(hovered, toWorld(e.clientX, e.clientY))
+        updateMeasure(hovered)
     })
     canvas.addEventListener("pointerleave", () => clearMeasure())
 
@@ -1762,7 +1764,7 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
     const fillSwatch = fillRow.querySelector<HTMLElement>(".swatch")
     const fillHex = fillRow.querySelector<HTMLElement>(".hex")
     const fillPct = fillRow.querySelector<HTMLElement>(".pct")
-    let bg = { hex: "#fafaf9", alpha: 100 }
+    let bg = { hex: "#ededed", alpha: 100 }
     function applyBg() {
         canvas.style.backgroundColor = rgbaCss(bg.hex, bg.alpha)
     }
