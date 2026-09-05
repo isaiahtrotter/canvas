@@ -582,6 +582,26 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
         },
         { passive: false }
     )
+    /* Panning is always done through view.x/y + the #world transform — #canvas
+       itself never scrolls under our own code. But while editing text near an
+       edge, the browser's native "keep the caret in view" behavior scrolls
+       #canvas directly, and everything our own render pipeline draws (the
+       selection box, handles, and size tooltip in #overlay) is positioned
+       from view.x/y alone, with no idea that #canvas has scrolled — so it
+       stops tracking the text and is left stranded at its pre-scroll spot.
+       Fold that scroll straight into our own pan instead of fighting it: the
+       browser still decides when and how far to scroll to keep the caret
+       visible, we just absorb the result into view.x/y and re-render through
+       the normal path, so everything — including the selection box — moves
+       together and stays in sync. */
+    canvas.addEventListener("scroll", () => {
+        if (!canvas.scrollLeft && !canvas.scrollTop) return
+        view.x -= canvas.scrollLeft
+        view.y -= canvas.scrollTop
+        canvas.scrollLeft = 0
+        canvas.scrollTop = 0
+        applyView()
+    })
     root.querySelectorAll<HTMLElement>(".zoompill [data-z]").forEach((b) => {
         b.addEventListener("click", () => {
             if (b.dataset.z === "reset") resetView()
