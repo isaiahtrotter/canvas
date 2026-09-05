@@ -28,6 +28,16 @@ interface TextItem {
     alpha: number // 0–100
 }
 
+/** Smart layout: the frame arranges the text it holds itself. Treated as
+ *  immutable — a change replaces the object — so undo snapshots (shallow
+ *  copies of items) keep the version they were taken with. */
+export interface FrameLayout {
+    direction: "vertical" | "horizontal"
+    gap: number // between children, world units
+    padding: number // inside the frame, all sides
+    align: "start" | "center" | "end" // children along the cross axis
+    sizing: "hug" | "fixed" // hug: the frame fits its contents; fixed: keeps its w/h
+}
 export interface FrameItem {
     kind: "frame"
     id: number
@@ -40,6 +50,7 @@ export interface FrameItem {
     updatedAt: number
     fill: string // hex
     alpha: number // 0–100
+    layout?: FrameLayout | null
 }
 
 export interface Fill {
@@ -1174,12 +1185,87 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
             if (isFrame(it)) updateFrameNode(el, it)
             else updateTextNode(el, it as TextItem, multi)
         })
+        // smart layouts need the fresh nodes' measurements; they may move
+        // children and resize hugging frames, so write those nodes again
+        if (applyLayouts()) {
+            ordered.forEach((it) => {
+                const el = world.querySelector<HTMLElement>(':scope > [data-id="' + it.id + '"]')
+                if (!el) return
+                if (isFrame(it)) updateFrameNode(el, it)
+                else updateTextNode(el, it as TextItem, multi)
+            })
+        }
         applyWash()
         applyClips()
         if (heat) applyHeat()
         renderSelectionOverlay()
         updateMinimap()
         renderLayers()
+    }
+
+    /* ---- smart layout engine ----
+       For every frame with a layout: its text children are ordered by where
+       they currently sit along the main axis (so dragging one to a new spot
+       and releasing reorders it), then stacked from the padding edge with
+       the gap between them, aligned on the cross axis. A hugging frame takes
+       the size of that stack. Runs inside renderCanvas() once the nodes are
+       current, since text sizes come from the DOM. Positions written here are
+       layout, not edits, so the timestamp baseline is updated to match and
+       nothing lights up because of them. Returns whether anything changed. */
+    const DEFAULT_LAYOUT: FrameLayout = { direction: "vertical", gap: 12, padding: 24, align: "start", sizing: "hug" }
+    function applyLayouts(): boolean {
+        let changed = false
+        items.filter(isFrame).forEach((f) => {
+            const L = f.layout
+            if (!L) return
+            const kids = items.filter((t): t is TextItem => isText(t) && t.parent === f.id)
+            const vertical = L.direction === "vertical"
+            const sized = kids.map((k) => ({ k, ...nodeSize(k) }))
+            sized.sort((a, b) => (vertical ? a.k.y - b.k.y : a.k.x - b.k.x) || a.k.id - b.k.id)
+            const mainOf = (s: { w: number; h: number }) => (vertical ? s.h : s.w)
+            const crossOf = (s: { w: number; h: number }) => (vertical ? s.w : s.h)
+            const mainTotal = sized.reduce((sum, s) => sum + mainOf(s), 0) + L.gap * Math.max(0, sized.length - 1)
+            const crossMax = sized.reduce((m, s) => Math.max(m, crossOf(s)), 0)
+            if (L.sizing === "hug") {
+                const w = Math.max(1, Math.round((vertical ? crossMax : mainTotal) + L.padding * 2))
+                const h = Math.max(1, Math.round((vertical ? mainTotal : crossMax) + L.padding * 2))
+                if (w !== f.w || h !== f.h) {
+                    f.w = w
+                    f.h = h
+                    changed = true
+                }
+            }
+            const innerCross = (vertical ? f.w : f.h) - L.padding * 2
+            let cursor = L.padding
+            sized.forEach((s) => {
+                const cross = crossOf(s)
+                const off = L.align === "start" ? 0 : L.align === "center" ? (innerCross - cross) / 2 : innerCross - cross
+                const x = Math.round(vertical ? f.x + L.padding + off : f.x + cursor)
+                const y = Math.round(vertical ? f.y + cursor : f.y + L.padding + off)
+                if (x !== s.k.x || y !== s.k.y) {
+                    s.k.x = x
+                    s.k.y = y
+                    changed = true
+                    // a layout move isn't an edit: keep the timestamp baseline in step
+                    lastText.set(s.k.id, { sig: textSig(s.k), parent: s.k.parent ?? null })
+                }
+                cursor += mainOf(s) + L.gap
+            })
+        })
+        return changed
+    }
+    function setLayout(f: FrameItem, layout: FrameLayout | null) {
+        pushHistory()
+        f.layout = layout
+        f.updatedAt = Date.now()
+        emit()
+    }
+    // Shift+A: add a smart layout to the selected frame, or remove the one it has
+    function toggleLayout() {
+        const f = singleSelectedFrame()
+        if (!f) return
+        setLayout(f, f.layout ? null : { ...DEFAULT_LAYOUT })
+        showToast(f.layout ? "Smart layout added" : "Smart layout removed")
     }
 
     /* Text belongs to the frame recorded in its `parent` (set by where the
@@ -1632,6 +1718,8 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
             document.removeEventListener("pointerup", up)
             if (moved) {
                 it.updatedAt = Date.now()
+                // a hugging frame that's been sized by hand stops hugging
+                if (it.layout?.sizing === "hug") it.layout = { ...it.layout, sizing: "fixed" }
                 emit()
             }
         }
@@ -2194,6 +2282,11 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
         if (e.shiftKey && (e.key === "H" || e.key === "h")) {
             e.preventDefault()
             toggleHeat()
+            return
+        }
+        if (e.shiftKey && (e.key === "A" || e.key === "a")) {
+            e.preventDefault()
+            toggleLayout()
             return
         }
         if (e.key === "v" || e.key === "V") {
@@ -2996,6 +3089,7 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
             consumePos()
             frame[key] = next
             frame.updatedAt = Date.now()
+            if (frame.layout?.sizing === "hug") frame.layout = { ...frame.layout, sizing: "fixed" }
             emit()
         })
     })
@@ -3121,6 +3215,190 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
         sel.forEach((it) => (it.font = font))
         emit()
     }
+
+    /* ---- Layout section: shown for a single selected frame ---- */
+    const layoutSec = root.querySelector<HTMLElement>("#layoutSec")
+    const layoutDiv = root.querySelector<HTMLElement>("#layoutDiv")
+    const layoutGroup = root.querySelector<HTMLElement>("#layoutGroup")
+    const ICON_V =
+        '<svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><path d="M2 2.5h8M2 6h8M2 9.5h8"/></svg>'
+    const ICON_H =
+        '<svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><path d="M2.5 2v8M6 2v8M9.5 2v8"/></svg>'
+    // a compact segmented control with the sliding highlight, like the settings' .seg
+    function makeSeg<T extends string>(
+        options: Array<{ value: T; label: string; icon?: string; title?: string }>,
+        onPick: (v: T) => void
+    ) {
+        const el = document.createElement("div")
+        el.className = "lseg"
+        const ind = document.createElement("div")
+        ind.className = "segind"
+        el.appendChild(ind)
+        const btns = options.map((o) => {
+            const b = document.createElement("button")
+            b.type = "button"
+            b.tabIndex = -1
+            b.dataset.value = o.value
+            b.innerHTML = (o.icon ?? "") + (o.label ? `<span>${o.label}</span>` : "")
+            if (o.title) b.title = o.title
+            b.addEventListener("click", () => onPick(o.value))
+            el.appendChild(b)
+            return b
+        })
+        let placed = false
+        function set(v: T) {
+            btns.forEach((b) => b.classList.toggle("active", b.dataset.value === v))
+            const a = btns.find((b) => b.dataset.value === v)
+            if (!a || !a.offsetWidth) return
+            if (!placed) ind.style.transition = "none"
+            ind.style.left = a.offsetLeft + "px"
+            ind.style.width = a.offsetWidth + "px"
+            if (!placed) {
+                placed = true
+                void ind.offsetWidth
+                ind.style.transition = ""
+            }
+        }
+        return { el, set }
+    }
+    // a .pi number field bound to one layout property of the selected frame
+    function layoutNumField(key: string, label: string, prop: "gap" | "padding") {
+        const pi = document.createElement("div")
+        pi.className = "pi"
+        const k = document.createElement("span")
+        k.className = "pi-key"
+        k.textContent = key
+        const input = document.createElement("input")
+        input.setAttribute("inputmode", "numeric")
+        input.setAttribute("aria-label", label)
+        input.title = label
+        pi.append(k, input)
+        let pre = null
+        function apply(v: number) {
+            const f = singleSelectedFrame()
+            if (!f?.layout || f.layout[prop] === v) return
+            if (pre) {
+                pushHistory(pre)
+                pre = null
+            }
+            f.layout = { ...f.layout, [prop]: v }
+            f.updatedAt = Date.now()
+            emit()
+        }
+        function update(force?: boolean) {
+            const f = singleSelectedFrame()
+            if (!f?.layout) return
+            if (document.activeElement === input && !force) return
+            input.value = String(f.layout[prop])
+        }
+        input.addEventListener("focus", () => {
+            pre = snapshot()
+            input.select()
+        })
+        input.addEventListener("input", () => {
+            const v = parseFloat(input.value)
+            if (!isNaN(v)) apply(Math.max(0, Math.round(v)))
+        })
+        input.addEventListener("keydown", (e) => {
+            if (e.key === "Enter") {
+                input.blur()
+                return
+            }
+            if (e.key === "ArrowUp" || e.key === "ArrowDown") {
+                e.preventDefault()
+                const f = singleSelectedFrame()
+                if (!f?.layout) return
+                if (!pre) pre = snapshot()
+                apply(Math.max(0, f.layout[prop] + arrowStep(e)))
+                update(true)
+            }
+        })
+        input.addEventListener("blur", () => {
+            pre = null
+            update(true)
+        })
+        return { el: pi, update }
+    }
+    function buildLayoutPanel() {
+        if (!layoutGroup) return () => {}
+        const change = (patch: Partial<FrameLayout>) => {
+            const f = singleSelectedFrame()
+            if (!f?.layout) return
+            pushHistory()
+            f.layout = { ...f.layout, ...patch }
+            f.updatedAt = Date.now()
+            emit()
+        }
+        // --- empty state: one button
+        const addBtn = document.createElement("button")
+        addBtn.type = "button"
+        addBtn.className = "layoutbtn"
+        addBtn.tabIndex = -1
+        addBtn.innerHTML = ICON_V + "<span>Add smart layout</span>"
+        addBtn.addEventListener("click", () => {
+            const f = singleSelectedFrame()
+            if (f && !f.layout) setLayout(f, { ...DEFAULT_LAYOUT })
+        })
+        // --- controls
+        const controls = document.createElement("div")
+        controls.className = "propgroup"
+        const dirSeg = makeSeg<FrameLayout["direction"]>(
+            [
+                { value: "vertical", label: "Vertical", icon: ICON_V },
+                { value: "horizontal", label: "Horizontal", icon: ICON_H },
+            ],
+            (direction) => change({ direction })
+        )
+        const spacingRow = document.createElement("div")
+        spacingRow.className = "proprow"
+        const gapField = layoutNumField("G", "Gap between items", "gap")
+        const padField = layoutNumField("P", "Padding", "padding")
+        spacingRow.append(gapField.el, padField.el)
+        const alignSeg = makeSeg<FrameLayout["align"]>(
+            [
+                { value: "start", label: "Start" },
+                { value: "center", label: "Center" },
+                { value: "end", label: "End" },
+            ],
+            (align) => change({ align })
+        )
+        const sizingSeg = makeSeg<FrameLayout["sizing"]>(
+            [
+                { value: "hug", label: "Hug contents", title: "The frame sizes itself to its contents" },
+                { value: "fixed", label: "Fixed", title: "The frame keeps the size you give it" },
+            ],
+            (sizing) => change({ sizing })
+        )
+        const removeBtn = document.createElement("button")
+        removeBtn.type = "button"
+        removeBtn.className = "layoutbtn remove"
+        removeBtn.tabIndex = -1
+        removeBtn.textContent = "Remove smart layout"
+        removeBtn.addEventListener("click", () => {
+            const f = singleSelectedFrame()
+            if (f?.layout) setLayout(f, null)
+        })
+        controls.append(dirSeg.el, spacingRow, alignSeg.el, sizingSeg.el, removeBtn)
+        layoutGroup.append(addBtn, controls)
+
+        return function updateLayoutPanel() {
+            const f = singleSelectedFrame()
+            const show = !!f
+            layoutSec?.classList.toggle("on", show)
+            layoutDiv?.classList.toggle("on", show)
+            if (!f) return
+            const has = !!f.layout
+            addBtn.style.display = has ? "none" : ""
+            controls.style.display = has ? "" : "none"
+            if (!f.layout) return
+            dirSeg.set(f.layout.direction)
+            alignSeg.set(f.layout.align)
+            sizingSeg.set(f.layout.sizing)
+            gapField.update()
+            padField.update()
+        }
+    }
+    const updateLayoutPanel = buildLayoutPanel()
 
     function buildPanel() {
         // the font row opens a floating list next to the sidebar (see
@@ -3721,6 +3999,7 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
         updateProps()
         updateAlignButtons()
         updateFill()
+        updateLayoutPanel()
         if (panelAPI) {
             panelAPI.updateField()
             panelAPI.updateTooltip()
@@ -3752,6 +4031,7 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
     restoring = false
     renderCanvas() // re-render with the centered positions
     buildPanel()
+    updateLayoutPanel()
     updateProps()
     updateAlignButtons()
     updateFill()

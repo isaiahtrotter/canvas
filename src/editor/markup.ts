@@ -99,6 +99,7 @@ export const MARKUP = `
               <div class="k">Undo / redo</div><div><kbd>⌘</kbd><kbd>Z</kbd> / <kbd>⇧</kbd><kbd>⌘</kbd><kbd>Z</kbd></div>
               <div class="k">Toggle timestamps</div><div><kbd>⇧</kbd><kbd>T</kbd></div>
               <div class="k">Heatmap of recent edits</div><div><kbd>⇧</kbd><kbd>H</kbd></div>
+              <div class="k">Add / remove smart layout (frame selected)</div><div><kbd>⇧</kbd><kbd>A</kbd></div>
               <div class="k">Settings</div><div><kbd>⌘</kbd><kbd>,</kbd></div>
               <div class="k">Hide / show sidebars</div><div><kbd>⌘</kbd><kbd>\\</kbd></div>
             </div>
@@ -126,6 +127,11 @@ export const MARKUP = `
           <div class="pi"><span class="pi-key">W</span><input id="dimW" disabled aria-label="Width"></div>
           <div class="pi"><span class="pi-key">H</span><input id="dimH" disabled aria-label="Height"></div>
         </div>
+      </div>
+      <div class="sp-divider sp-layout-div" id="layoutDiv"></div>
+      <div class="sp-section sp-layout" id="layoutSec">
+        <div class="sp-label">Layout</div>
+        <div class="propgroup" id="layoutGroup"></div>
       </div>
       <div class="sp-divider"></div>
       <div class="sp-section sp-fill">
