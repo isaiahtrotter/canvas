@@ -1776,7 +1776,11 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
        its name and timestamp above it, and the selection box with the live
        size badge around it. */
     function startFrameDraw(e: PointerEvent) {
-        const s = toWorld(e.clientX, e.clientY)
+        // frames live on integer coordinates, so the draft snaps to the grid as
+        // it's drawn: the anchor and every edge round to whole units, and the
+        // final frame is exactly what the preview showed
+        const s0 = toWorld(e.clientX, e.clientY)
+        const s = { x: Math.round(s0.x), y: Math.round(s0.y) }
         let draft: HTMLDivElement | null = null
         let draftBox: HTMLDivElement | null = null
         let draftSize: HTMLDivElement | null = null
@@ -1809,11 +1813,13 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
                 overlay.appendChild(draftBox)
             }
             if (!draft) return
+            const px = Math.round(p.x),
+                py = Math.round(p.y)
             r = {
-                x: Math.min(s.x, p.x),
-                y: Math.min(s.y, p.y),
-                w: Math.abs(p.x - s.x),
-                h: Math.abs(p.y - s.y),
+                x: Math.min(s.x, px),
+                y: Math.min(s.y, py),
+                w: Math.abs(px - s.x),
+                h: Math.abs(py - s.y),
             }
             draft.style.left = r.x + "px"
             draft.style.top = r.y + "px"
