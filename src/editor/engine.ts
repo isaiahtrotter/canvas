@@ -1650,6 +1650,7 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
         )
         const preDrag = snapshot() // pre-state: pushed once if the gesture actually moves anything
         let moved = false
+        let shiftAxis: "x" | "y" | null = null // sticks once chosen; see mv()
         let duplicated = false
         let copyIds: number[] = [] // the copies left at the origin while option is held
         // .dragging lifts the moving frame above other frames and its carried
@@ -1726,15 +1727,27 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
                 moved = true
                 pushHistory(preDrag)
             }
-            // Shift locks the drag to a straight line, horizontal or vertical —
-            // whichever the total displacement leans toward. Recomputed fresh
-            // from the pointer's total distance from the ORIGINAL start every
-            // time (dx/dy are never accumulated), so switching which axis wins
-            // mid-drag still measures from where the item actually started,
-            // never from wherever the lock had it a moment ago.
+            // Shift locks the drag to a straight line, horizontal or vertical.
+            // dx/dy are always the pointer's total distance from the ORIGINAL
+            // start (never accumulated), so the lock never drifts from where
+            // the item actually started. Which axis wins is sticky, not just
+            // "whichever is bigger right now": a path that trends horizontal
+            // still drifts exactly through the point where |dx| equals |dy| at
+            // some moment (jitter, or simply crossing that line on the way
+            // through), and re-deciding from scratch every frame flips the
+            // lock there for an instant before "trending" wins it back. Once
+            // an axis is chosen it keeps its grip until the other one clears
+            // it by a real margin — a few screen pixels, scaled for zoom — so
+            // a momentary near-tie can't flip it.
             if (ev.shiftKey) {
-                if (Math.abs(dx) >= Math.abs(dy)) dy = 0
+                const HYSTERESIS = 6 / view.z // screen px worth of "clear lead" needed to flip
+                if (shiftAxis === null) shiftAxis = Math.abs(dx) >= Math.abs(dy) ? "x" : "y"
+                else if (shiftAxis === "x" && Math.abs(dy) > Math.abs(dx) + HYSTERESIS) shiftAxis = "y"
+                else if (shiftAxis === "y" && Math.abs(dx) > Math.abs(dy) + HYSTERESIS) shiftAxis = "x"
+                if (shiftAxis === "x") dy = 0
                 else dx = 0
+            } else {
+                shiftAxis = null // released — the next press re-decides fresh
             }
             syncDuplicate(ev.altKey || ev.ctrlKey)
             starts.forEach((s) => {
