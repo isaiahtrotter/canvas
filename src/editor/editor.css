@@ -102,7 +102,7 @@
 
 /* ---- minimap ---- */
 .minimap{
-  position:absolute;left:12px;bottom:50px;width:140px;height:90px;z-index:20;
+  position:absolute;left:12px;bottom:50px;width:110px;height:72px;z-index:20;
   box-sizing:content-box;background:var(--surface);border:1px solid var(--line);border-radius:10px;overflow:hidden;
   box-shadow:0 4px 14px var(--shadow);cursor:pointer;
   opacity:0;transform:translateY(4px);pointer-events:none;
@@ -229,22 +229,45 @@
   transition:left .18s cubic-bezier(.3,.9,.4,1), width .18s ease;z-index:0;
 }
 
-/* ---- left panel: layers (parked for now, so the whole panel is hidden) ---- */
+/* ---- left panel: empty for now (layers will return here) ---- */
 .layerspanel{
   width:200px;flex-shrink:0;border-right:1px solid var(--line-soft);background:var(--surface);
-  padding:12px 8px 16px;display:flex;flex-direction:column;gap:8px;
+  padding:0 8px 16px;display:flex;flex-direction:column;gap:8px;
   overflow-y:auto;scrollbar-width:none;user-select:none;-webkit-user-select:none;
 }
 .layerspanel::-webkit-scrollbar{display:none;}
 .layerspanel .sp-label{padding:0 6px;}
-/* profile + share: pinned to the very top of the right sidebar, shown whether
-   or not anything is selected, above whatever scrolls beneath */
+/* panel headers: pinned to the very top, shown whether or not anything is
+   selected, above whatever scrolls beneath. Right: profile, hide button 12px
+   over, Share at the far end. Left: just the hide button, top-right. */
 .lp-head{
   position:sticky;top:0;z-index:2;flex-shrink:0;
-  display:flex;align-items:center;justify-content:space-between;
+  display:flex;align-items:center;gap:12px;
   padding:10px 10px 8px;margin:0 -8px;
   background:var(--surface);border-bottom:1px solid var(--line-soft);
 }
+.lp-head .sharebtn{margin-left:auto;}
+.lp-head-left{justify-content:flex-end;}
+/* sidebar toggle */
+.panelbtn{
+  width:26px;height:26px;border:none;border-radius:8px;background:transparent;padding:0;
+  color:var(--text-3);cursor:pointer;display:flex;align-items:center;justify-content:center;
+  transition:background .12s, color .12s;
+}
+.panelbtn:hover{background:var(--surface-2);color:var(--text);}
+.panelbtn svg{display:block;}
+/* when a sidebar is hidden, a floating copy of its button sits at that edge of the canvas */
+.reveal{
+  display:none;position:absolute;top:12px;z-index:20;width:32px;height:32px;padding:3px;
+  background:var(--surface);border:1px solid var(--line);border-radius:10px;box-shadow:0 4px 14px var(--shadow);
+}
+.reveal:hover{background:var(--surface);color:var(--text);}
+.reveal-left{left:12px;} .reveal-right{right:12px;}
+.app.left-hidden .layerspanel{display:none;}
+.app.left-hidden .reveal-left{display:flex;}
+.app.left-hidden .toolpill{left:52px;} /* make room for the reveal button */
+.app.right-hidden .sidepanel{display:none;}
+.app.right-hidden .reveal-right{display:flex;}
 .avatar{
   width:30px;height:30px;border-radius:50%;border:none;padding:0;cursor:pointer;
   background:var(--surface-2);color:var(--text);font-family:inherit;font-size:11.5px;font-weight:600;

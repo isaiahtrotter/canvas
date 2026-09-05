@@ -1,12 +1,13 @@
 export const MARKUP = `
 <div class="app">
-    <div class="layerspanel layers-parked">
-      <div class="layers-sec">
-        <div class="sp-label">Layers</div>
-        <div class="layerlist" id="layerList"></div>
+    <div class="layerspanel">
+      <div class="lp-head lp-head-left">
+        <button class="panelbtn" id="hideLeft" type="button" aria-label="Hide left sidebar" title="Hide sidebar"><svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.3"><rect x="1.5" y="2.5" width="11" height="9" rx="2"/><path d="M5.5 2.5v9"/></svg></button>
       </div>
     </div>
     <div class="canvas-wrap">
+      <button class="panelbtn reveal reveal-left" id="showLeft" type="button" aria-label="Show left sidebar" title="Show sidebar"><svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.3"><rect x="1.5" y="2.5" width="11" height="9" rx="2"/><path d="M5.5 2.5v9"/></svg></button>
+      <button class="panelbtn reveal reveal-right" id="showRight" type="button" aria-label="Show right sidebar" title="Show sidebar"><svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.3"><rect x="1.5" y="2.5" width="11" height="9" rx="2"/><path d="M8.5 2.5v9"/></svg></button>
       <div class="canvas" id="canvas"><div class="world" id="world"></div><div class="overlay" id="overlay"><div class="grid" id="grid"></div></div></div>
       <div class="toolpill" role="toolbar" aria-label="Tools">
         <button data-tool="move" class="active" title="Move (V)" aria-label="Move tool" tabindex="-1">
@@ -94,6 +95,7 @@ export const MARKUP = `
               <div class="k">Undo / redo</div><div><kbd>⌘</kbd><kbd>Z</kbd> / <kbd>⇧</kbd><kbd>⌘</kbd><kbd>Z</kbd></div>
               <div class="k">Toggle timestamps</div><div><kbd>⇧</kbd><kbd>T</kbd></div>
               <div class="k">Settings</div><div><kbd>⌘</kbd><kbd>,</kbd></div>
+              <div class="k">Hide / show sidebars</div><div><kbd>⌘</kbd><kbd>\\</kbd></div>
             </div>
           </section>
         </div>
@@ -102,6 +104,7 @@ export const MARKUP = `
     <div class="sidepanel">
       <div class="lp-head">
         <button class="avatar" id="avatarBtn" type="button" aria-label="Open settings" title="Settings"></button>
+        <button class="panelbtn" id="hideRight" type="button" aria-label="Hide right sidebar" title="Hide sidebar"><svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.3"><rect x="1.5" y="2.5" width="11" height="9" rx="2"/><path d="M8.5 2.5v9"/></svg></button>
         <button class="sharebtn" id="shareBtn" type="button" disabled title="Sharing is coming soon">Share</button>
       </div>
       <div class="sp-section">

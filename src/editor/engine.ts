@@ -410,9 +410,20 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
               })
             : null
     canvasRO?.observe(canvas)
-    const MM_W = 140,
-        MM_H = 90,
+    // the minimap is exactly as wide as the zoom pill beneath it; MM_W is
+    // re-measured from the pill each time the map is drawn
+    let MM_W = 110
+    const MM_H = 72,
         MM_PAD = 4
+    const zoomPill = root.querySelector<HTMLElement>(".zoompill")
+    function syncMinimapWidth() {
+        if (!zoomPill || !minimap) return
+        const w = zoomPill.offsetWidth - 2 // the map is content-box with a 1px border
+        if (w > 0 && w !== MM_W) {
+            MM_W = w
+            minimap.style.width = MM_W + "px"
+        }
+    }
     let mmScale = 1,
         mmOx = 0,
         mmOy = 0 // world → minimap: (x - mmOx) * mmScale
@@ -443,6 +454,7 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
         const show = items.length > 0 && !anyVisible
         minimap.classList.toggle("on", show)
         if (!show) return
+        syncMinimapWidth()
         // fit everything plus the viewport
         const all = boundsOf(items)
         const x1 = Math.min(all.x, vp.x),
@@ -1621,6 +1633,11 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
         if ((e.metaKey || e.ctrlKey) && e.key === ",") {
             e.preventDefault()
             openSettings()
+            return
+        }
+        if ((e.metaKey || e.ctrlKey) && e.key === "\\") {
+            e.preventDefault()
+            toggleSidebars()
             return
         }
         const a = document.activeElement as HTMLElement | null
@@ -2906,7 +2923,13 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
     /* ================= preferences, theme, settings ================= */
     type Theme = "light" | "dark" | "system"
     const PREFS_KEY = "canvas.prefs.v1"
-    const prefs: { theme: Theme; name: string; grid: boolean } = { theme: "system", name: "", grid: true }
+    const prefs: { theme: Theme; name: string; grid: boolean; leftPanel: boolean; rightPanel: boolean } = {
+        theme: "system",
+        name: "",
+        grid: true,
+        leftPanel: true,
+        rightPanel: true,
+    }
     try {
         const raw = localStorage.getItem(PREFS_KEY)
         if (raw) {
@@ -2914,6 +2937,8 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
             if (p.theme === "light" || p.theme === "dark" || p.theme === "system") prefs.theme = p.theme
             if (typeof p.name === "string") prefs.name = p.name.slice(0, 40)
             if (typeof p.grid === "boolean") prefs.grid = p.grid
+            if (typeof p.leftPanel === "boolean") prefs.leftPanel = p.leftPanel
+            if (typeof p.rightPanel === "boolean") prefs.rightPanel = p.rightPanel
         }
     } catch (_) {
         /* defaults */
@@ -3037,6 +3062,31 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
         scheduleSave()
     })
     root.querySelector<HTMLElement>("#prefResetView")?.addEventListener("click", resetView)
+
+    /* ---- sidebars: each hides from its own header button and comes back
+       from a floating button at that edge of the canvas; ⌘\ toggles both ---- */
+    function applyPanels() {
+        app.classList.toggle("left-hidden", !prefs.leftPanel)
+        app.classList.toggle("right-hidden", !prefs.rightPanel)
+        // the canvas just changed size; its ResizeObserver redraws the chrome
+    }
+    function setPanel(side: "leftPanel" | "rightPanel", on: boolean) {
+        if (prefs[side] === on) return
+        prefs[side] = on
+        savePrefs()
+        applyPanels()
+    }
+    function toggleSidebars() {
+        const anyOn = prefs.leftPanel || prefs.rightPanel
+        prefs.leftPanel = prefs.rightPanel = !anyOn
+        savePrefs()
+        applyPanels()
+    }
+    root.querySelector<HTMLElement>("#hideLeft")?.addEventListener("click", () => setPanel("leftPanel", false))
+    root.querySelector<HTMLElement>("#showLeft")?.addEventListener("click", () => setPanel("leftPanel", true))
+    root.querySelector<HTMLElement>("#hideRight")?.addEventListener("click", () => setPanel("rightPanel", false))
+    root.querySelector<HTMLElement>("#showRight")?.addEventListener("click", () => setPanel("rightPanel", true))
+    applyPanels()
 
     /* ================= wire up ================= */
     subscribe(renderCanvas)
