@@ -1801,7 +1801,11 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
         const mode = fillMode()
         fillLabel.textContent = mode === "background" ? "Background" : "Fill"
         // with nothing selected the sidebar collapses to just this section
+        const wasEmpty = sidepanel.classList.contains("empty")
         sidepanel.classList.toggle("empty", mode === "background")
+        // the Versions indicator is measured from layout, which is all zeros
+        // while its section is display:none — re-measure once it's back
+        if (wasEmpty && mode !== "background") updateVariantButtons()
         fillRow.classList.toggle("disabled", false) // always actionable now — selection fill, or the background
         if (mode === "background") {
             fillRow.classList.remove("mixed")
