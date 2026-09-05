@@ -1740,7 +1740,7 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
             // it by a real margin — a few screen pixels, scaled for zoom — so
             // a momentary near-tie can't flip it.
             if (ev.shiftKey) {
-                const HYSTERESIS = 6 / view.z // screen px worth of "clear lead" needed to flip
+                const HYSTERESIS = 30 / view.z // screen px worth of "clear lead" needed to flip
                 if (shiftAxis === null) shiftAxis = Math.abs(dx) >= Math.abs(dy) ? "x" : "y"
                 else if (shiftAxis === "x" && Math.abs(dy) > Math.abs(dx) + HYSTERESIS) shiftAxis = "y"
                 else if (shiftAxis === "y" && Math.abs(dx) > Math.abs(dy) + HYSTERESIS) shiftAxis = "x"
