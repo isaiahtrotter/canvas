@@ -1143,8 +1143,14 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
 
     // Text underlines (hover, multi-select, marquee touch) are drawn here as
     // 1px screen-space lines rather than text-decoration inside the scaled
-    // world, so they stay crisp at any zoom. Sits at the glyph baseline —
-    // approximated as 0.22em above the line box's bottom.
+    // world, so they stay crisp at any zoom. Sits at the glyph baseline,
+    // approximated as 0.22em above the bottom of a *natural* (default
+    // line-height) line box — independent of the item's actual line height.
+    // A taller line box centers its content within the extra space (half
+    // above, half below, same as CSS half-leading), so the natural box's top
+    // sits half the extra height below the item's own y; the glyph baseline
+    // is found from there, not from the bottom of the (possibly much taller)
+    // rendered box.
     function renderUnderlines() {
         overlay.querySelectorAll<HTMLElement>(".tunder").forEach((n) => n.remove())
         items.filter(isText).forEach((it) => {
@@ -1155,7 +1161,8 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
             if (!w) return
             const f = containingFrame(it)
             if (f) w = Math.max(0, Math.min(w, f.x + f.w - it.x)) // the clipped part has no underline
-            const y = it.y + h - it.size * 0.22
+            const naturalH = it.size * DEFAULT_LINE_HEIGHT
+            const y = it.y + (h + naturalH) / 2 - it.size * 0.22
             const a = toScreen(it.x, y)
             const u = document.createElement("div")
             u.className = "tunder"
@@ -2200,32 +2207,32 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
         dark: { name: "#1c1c1c", time: "#5a5a5a", grid: "rgba(0,0,0,.11)" },
         pale: { name: "#f4f4f4", time: "#a8a8a8", grid: "rgba(255,255,255,.13)" },
     }
-    /* The selection blue (frame name when selected/hovered, selection box,
-       handles, underlines, marquee) gets the same treatment: the brand accent
-       stays until the background gets close to it, then a darker or a paler
-       blue takes over — whichever reads better. Set as --accent on #canvas,
-       so only canvas chrome changes; the panels keep the brand color. */
-    const ACCENTS = { base: "#0c8ce9", dark: "#0b4f8f", pale: "#a6d4ff" }
-    const MIN_ACCENT_CONTRAST = 2
-    function accentColor(seen: [number, number, number]) {
-        const contrast = (hex: string) => contrastRatio(hexToRgb(hex), seen)
-        if (contrast(ACCENTS.base) >= MIN_ACCENT_CONTRAST) return ACCENTS.base
-        return contrast(ACCENTS.dark) >= contrast(ACCENTS.pale) ? ACCENTS.dark : ACCENTS.pale
-    }
-    function labelPalette() {
-        const seen = compositeOver(hexToRgb(bg.hex), bg.alpha, surfaceRgb())
+    /* One light/dark call for the whole canvas, decided from the background's
+       overall luminance (via two opposite grays' contrast — hue-independent,
+       so a light pastel background still reads as "light"). Both the label
+       palette and the frame-name accent switch together on it. */
+    function canvasIsDark(seen: [number, number, number]) {
         const timeContrast = (p: { time: string }) => contrastRatio(hexToRgb(p.time), seen)
-        return timeContrast(LABEL_PALETTES.dark) >= timeContrast(LABEL_PALETTES.pale)
-            ? LABEL_PALETTES.dark
-            : LABEL_PALETTES.pale
+        return timeContrast(LABEL_PALETTES.pale) > timeContrast(LABEL_PALETTES.dark)
+    }
+    /* The frame name (selected/hovered) normally matches the fixed selection
+       blue (--sel-blue) — only on a genuinely dark canvas does it switch to a
+       paler blue for legibility. Set as --accent on #canvas, so only canvas
+       chrome adapts; the panels keep the brand color regardless. */
+    const ACCENTS = { base: "#0c8ce9", pale: "#a6d4ff" }
+    function accentColor(seen: [number, number, number]) {
+        return canvasIsDark(seen) ? ACCENTS.pale : ACCENTS.base
+    }
+    function labelPalette(seen: [number, number, number]) {
+        return canvasIsDark(seen) ? LABEL_PALETTES.pale : LABEL_PALETTES.dark
     }
     function applyBg() {
         canvas.style.backgroundColor = rgbaCss(bg.hex, bg.alpha)
-        const p = labelPalette()
+        const seen = compositeOver(hexToRgb(bg.hex), bg.alpha, surfaceRgb())
+        const p = labelPalette(seen)
         canvas.style.setProperty("--fname", p.name)
         canvas.style.setProperty("--ftime", p.time)
         canvas.style.setProperty("--grid", p.grid)
-        const seen = compositeOver(hexToRgb(bg.hex), bg.alpha, surfaceRgb())
         canvas.style.setProperty("--accent", accentColor(seen))
     }
     // shared fill of the selection, or null when empty / mixed

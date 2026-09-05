@@ -152,8 +152,10 @@
   cursor:text;user-select:text;outline:none;
   background:transparent;
 }
-.titem[contenteditable="true"]::selection{background:color-mix(in srgb, var(--accent) 16%, transparent);}
-.titem[contenteditable="true"]::-moz-selection{background:color-mix(in srgb, var(--accent) 16%, transparent);}
+/* fixed, like --sel-blue — the text selection highlight never adapts to the
+   canvas background */
+.titem[contenteditable="true"]::selection{background:color-mix(in srgb, var(--sel-blue) 16%, transparent);}
+.titem[contenteditable="true"]::-moz-selection{background:color-mix(in srgb, var(--sel-blue) 16%, transparent);}
 
 /* Figma-style selection overlay */
 .selbox{
