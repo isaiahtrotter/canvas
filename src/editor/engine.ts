@@ -16,6 +16,11 @@ interface TextItem {
     weight: number
     lineHeight?: number // unitless multiplier; default 1.2
     letterSpacing?: number // px; default 0
+    /** id of the frame this text belongs to, or null. Membership is decided by
+     *  where the pointer is when a drag ends (or where a frame is drawn), not by
+     *  geometry, so a text can hang past its frame's edge and still be clipped
+     *  by it. `undefined` only in documents saved before this field existed. */
+    parent?: number | null
     opacity?: number
     fill: string // hex
     alpha: number // 0–100
@@ -137,7 +142,7 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
        restored snapshot keeps the timestamps it was saved with. */
     let restoring = false
     let carryingFrameDrag = false // true only while a frame-drag's own emit() is diffing
-    const lastText = new Map<number, { sig: string; x: number; y: number }>()
+    const lastText = new Map<number, { sig: string; parent: number | null }>()
     function textSig(it: TextItem) {
         return [it.x, it.y, it.text, it.size, it.font, it.weight, it.fill, it.alpha, lineHeightOf(it), letterSpacingOf(it)].join("|")
     }
@@ -147,17 +152,17 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
         items.filter(isText).forEach((t) => {
             seen.add(t.id)
             const sig = textSig(t)
+            const parent = t.parent ?? null
             const prev = lastText.get(t.id)
-            if (!prev || prev.sig !== sig) {
+            if (!prev || prev.sig !== sig || prev.parent !== parent) {
                 if (!restoring && !carryingFrameDrag) {
                     const bump = (f: FrameItem | null) => {
                         if (f) f.updatedAt = now
                     }
                     bump(containingFrame(t))
-                    if (prev && (prev.x !== t.x || prev.y !== t.y))
-                        bump(containingFrame({ ...t, x: prev.x, y: prev.y }))
+                    if (prev && prev.parent !== parent) bump(frameById(prev.parent)) // the frame it left
                 }
-                lastText.set(t.id, { sig, x: t.x, y: t.y })
+                lastText.set(t.id, { sig, parent })
             }
         })
         lastText.forEach((_, id) => {
@@ -226,11 +231,23 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
                 opacity: 100,
                 fill: "#1c1c1c",
                 alpha: 100,
+                parent: null,
             },
             props
         )
         items.push(it)
         return it
+    }
+    function frameById(id: number | null | undefined): FrameItem | null {
+        if (id == null) return null
+        const f = items.find((it) => it.id === id)
+        return f && isFrame(f) ? f : null
+    }
+    // a freshly drawn frame takes in the loose text that sits fully inside it
+    function adoptLooseText(f: FrameItem) {
+        items.filter(isText).forEach((t) => {
+            if (t.parent == null && rectContains(f, t)) t.parent = f.id
+        })
     }
 
     let frameCount = 0
@@ -296,6 +313,17 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
             const d = JSON.parse(raw)
             if (!Array.isArray(d.items)) return false
             d.items.forEach((it) => items.push(it))
+            // documents from before explicit membership: a text belongs to the
+            // smallest frame its top-left corner falls in
+            items.filter(isText).forEach((t) => {
+                if (t.parent !== undefined) return
+                let best: FrameItem | null = null
+                items.filter(isFrame).forEach((f) => {
+                    const inside = t.x >= f.x && t.y >= f.y && t.x < f.x + f.w && t.y < f.y + f.h
+                    if (inside && (!best || f.w * f.h < best.w * best.h)) best = f
+                })
+                t.parent = best ? best.id : null
+            })
             nextId = typeof d.nextId === "number" ? d.nextId : items.reduce((m, it) => Math.max(m, it.id), 0) + 1
             frameCount = typeof d.frameCount === "number" ? d.frameCount : items.filter(isFrame).length
             if (d.bg && isHex(d.bg.hex)) bg = { hex: d.bg.hex, alpha: d.bg.alpha ?? 100 }
@@ -835,14 +863,24 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
         renderLayers()
     }
 
-    /* Text belongs to a frame by where it starts (its top-left origin), like
-       dropping it into the frame — so a line that runs past the frame's edge
-       still belongs to it, and the part poking out is clipped. Frames nest
-       only when fully contained. */
+    /* Text belongs to the frame recorded in its `parent` (set by where the
+       pointer is when it's dropped, or by the frame drawn around it), so a
+       line that runs past the frame's edge still belongs to it and the part
+       poking out is clipped. Frames nest only when fully contained. */
     function frameHolds(f: FrameItem, it: Item) {
         if (f.id === it.id) return false
         if (isFrame(it)) return rectContains(f, it)
-        return it.x >= f.x && it.y >= f.y && it.x < f.x + f.w && it.y < f.y + f.h
+        return it.parent === f.id
+    }
+    // smallest frame under a world point, skipping `exclude` (frames being dragged)
+    function frameAt(p: { x: number; y: number }, exclude?: Set<number>): FrameItem | null {
+        let best: FrameItem | null = null
+        items.filter(isFrame).forEach((f) => {
+            if (exclude?.has(f.id)) return
+            if (p.x < f.x || p.y < f.y || p.x >= f.x + f.w || p.y >= f.y + f.h) return
+            if (!best || f.w * f.h < best.w * best.h) best = f
+        })
+        return best
     }
     // clip every text layer to the frame it belongs to; text being edited is
     // left unclipped so the caret and what's typed stay visible
@@ -1011,12 +1049,13 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
         const b = boundsOf(items.filter(isText))
         if (!b) return
         const PAD = 48
-        addFrame({
+        const f = addFrame({
             x: Math.round(b.x - PAD),
             y: Math.round(b.y - PAD),
             w: Math.round(b.w + PAD * 2),
             h: Math.round(b.h + PAD * 2),
         })
+        adoptLooseText(f)
     }
 
     /* Rendered size of an item, in world units. Frames know their size;
@@ -1059,8 +1098,10 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
             it.y + h <= f.y + f.h
         )
     }
-    // smallest frame holding the item (see frameHolds), if any
+    // the frame holding the item (see frameHolds), if any: a text's parent,
+    // or the smallest frame fully containing a frame
     function containingFrame(it: Item): FrameItem | null {
+        if (isText(it)) return frameById(it.parent)
         let best: FrameItem | null = null
         items.filter(isFrame).forEach((f) => {
             if (!frameHolds(f, it)) return
@@ -1306,18 +1347,28 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
             it: s,
             x: s.x,
             y: s.y,
+            parent: isText(s) ? s.parent ?? null : null,
         }))
         // a frame carries the text sitting inside it, selected or not
         const carried = new Set(starts.map((s) => s.it.id))
+        const draggedFrames = new Set(starts.filter((s) => isFrame(s.it)).map((s) => s.it.id))
         selectedItems()
             .filter(isFrame)
             .forEach((f) => {
                 items.filter(isText).forEach((t) => {
                     if (carried.has(t.id) || !frameHolds(f, t)) return
                     carried.add(t.id)
-                    starts.push({ it: t, x: t.x, y: t.y })
+                    starts.push({ it: t, x: t.x, y: t.y, parent: t.parent ?? null })
                 })
             })
+        // Text moving on its own (not riding along inside a dragged frame)
+        // follows the pointer's membership: while the pointer is over a frame
+        // the text belongs to it (and is clipped by it); the moment the pointer
+        // leaves, the text leaves too.
+        const freeTexts = starts.filter(
+            (s): s is typeof s & { it: TextItem } =>
+                isText(s.it) && !(s.it.parent != null && draggedFrames.has(s.it.parent))
+        )
         const preDrag = snapshot() // pre-state: pushed once if the gesture actually moves anything
         let moved = false
         let duplicated = false
@@ -1341,7 +1392,19 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
             // or pressed at any point during the drag: a copy is left at the origin
             if (moved && !duplicated && (ev.altKey || ev.ctrlKey)) {
                 duplicated = true
-                starts.forEach((s) => duplicateItem(s.it, s.x, s.y))
+                // the copies stay where the drag began, so they keep the
+                // membership from then — pointed at the copied frame when
+                // their frame was duplicated along with them
+                const copies = new Map<number, number>()
+                starts
+                    .filter((s) => isFrame(s.it))
+                    .forEach((s) => copies.set(s.it.id, duplicateItem(s.it, s.x, s.y).id))
+                starts
+                    .filter((s) => isText(s.it))
+                    .forEach((s) => {
+                        const c = duplicateItem(s.it, s.x, s.y) as TextItem
+                        c.parent = s.parent == null ? null : copies.get(s.parent) ?? s.parent
+                    })
                 emit()
                 markDragging(true) // the re-render dropped the class
             }
@@ -1349,6 +1412,10 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
                 s.it.x = Math.round(s.x + dx)
                 s.it.y = Math.round(s.y + dy)
             })
+            if (moved && freeTexts.length) {
+                const under = frameAt(toWorld(ev.clientX, ev.clientY), draggedFrames)
+                freeTexts.forEach((s) => (s.it.parent = under ? under.id : null))
+            }
             items.forEach((i2) => {
                 const node = canvas.querySelector<HTMLElement>(
                     '[data-id="' + i2.id + '"]'
@@ -1420,6 +1487,7 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
                 w: Math.round(box.w),
                 h: Math.round(box.h),
             })
+            adoptLooseText(f)
             selection.clear()
             selection.add(f.id)
             setTool("move")
