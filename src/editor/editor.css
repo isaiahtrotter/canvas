@@ -297,6 +297,9 @@
 /* below .selbox (8) so a guide never crosses over the blue size badge */
 .measure{position:absolute;left:0;top:0;pointer-events:none;z-index:7;}
 .measure-line{position:absolute;background:#f24822;pointer-events:none;}
+/* smart guides: a 1px line along the edge/center a drag has snapped to,
+   spanning the moving box and the layer it aligned with */
+.snapline{position:absolute;background:#f24822;pointer-events:none;z-index:9;}
 .measure-label{
   position:absolute;transform:translate(-50%,-50%);
   background:#f24822;color:#fff;font-size:10px;font-weight:600;line-height:1;

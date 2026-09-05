@@ -1432,6 +1432,93 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
             overlay.appendChild(u)
         })
     }
+    /* ---- smart guides while dragging ---- */
+    type Rect = { x: number; y: number; w: number; h: number }
+    type SnapGuide = { axis: "x" | "y"; at: number; from: number; to: number }
+    const SNAP_PX = 6 // screen px of pull
+    // the three alignment lines of a box along one axis: start, center, end
+    const linesOf = (r: Rect, axis: "x" | "y") =>
+        axis === "x" ? [r.x, r.x + r.w / 2, r.x + r.w] : [r.y, r.y + r.h / 2, r.y + r.h]
+    /* Given the moving box (base + current delta) and everything that isn't
+       moving, find the smallest edge/center-to-edge/center gap per axis within
+       the snap radius. Returns the corrected delta plus one guide per snapped
+       axis, spanning both the moving box and the layer it snapped to. */
+    function snapToGuides(
+        base: Rect,
+        dx: number,
+        dy: number,
+        moving: Set<number>,
+        locked: "x" | "y" | null
+    ): { dx: number; dy: number; guides: SnapGuide[] } | null {
+        const targets = items.filter((it) => !moving.has(it.id)).map((it) => itemBounds(it))
+        if (!targets.length) return null
+        const thr = SNAP_PX / view.z
+        const guides: SnapGuide[] = []
+        let changed = false
+        for (const axis of ["x", "y"] as const) {
+            // an axis Shift has pinned stays pinned
+            if (locked === "x" && axis === "y") continue
+            if (locked === "y" && axis === "x") continue
+            const live: Rect = { x: base.x + dx, y: base.y + dy, w: base.w, h: base.h }
+            const mine = linesOf(live, axis)
+            let best: { delta: number; at: number; target: Rect } | null = null
+            for (const t of targets) {
+                for (const tl of linesOf(t, axis)) {
+                    for (const ml of mine) {
+                        const delta = tl - ml
+                        if (Math.abs(delta) <= thr && (!best || Math.abs(delta) < Math.abs(best.delta)))
+                            best = { delta, at: tl, target: t }
+                    }
+                }
+            }
+            if (!best) continue
+            changed = true
+            if (axis === "x") dx += best.delta
+            else dy += best.delta
+            const snappedLive: Rect = { x: base.x + dx, y: base.y + dy, w: base.w, h: base.h }
+            // the guide runs along the snapped line, spanning both boxes
+            guides.push(
+                axis === "x"
+                    ? {
+                          axis,
+                          at: best.at,
+                          from: Math.min(snappedLive.y, best.target.y),
+                          to: Math.max(snappedLive.y + snappedLive.h, best.target.y + best.target.h),
+                      }
+                    : {
+                          axis,
+                          at: best.at,
+                          from: Math.min(snappedLive.x, best.target.x),
+                          to: Math.max(snappedLive.x + snappedLive.w, best.target.x + best.target.w),
+                      }
+            )
+        }
+        return changed ? { dx, dy, guides } : null
+    }
+    function renderSnapGuides(guides: SnapGuide[]) {
+        overlay.querySelectorAll<HTMLElement>(".snapline").forEach((n) => n.remove())
+        guides.forEach((g) => {
+            const el = document.createElement("div")
+            el.className = "snapline"
+            if (g.axis === "x") {
+                const a = toScreen(g.at, g.from),
+                    b = toScreen(g.at, g.to)
+                el.style.left = Math.round(a.x) + "px"
+                el.style.top = Math.round(a.y) + "px"
+                el.style.width = "1px"
+                el.style.height = Math.round(b.y) - Math.round(a.y) + "px"
+            } else {
+                const a = toScreen(g.from, g.at),
+                    b = toScreen(g.to, g.at)
+                el.style.left = Math.round(a.x) + "px"
+                el.style.top = Math.round(a.y) + "px"
+                el.style.width = Math.round(b.x) - Math.round(a.x) + "px"
+                el.style.height = "1px"
+            }
+            overlay.appendChild(el)
+        })
+    }
+
     function renderSelectionOverlay() {
         canvas.querySelectorAll<HTMLElement>(".selbox").forEach((n) => n.remove())
         renderFrameLabels()
@@ -1665,6 +1752,10 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
             (s): s is typeof s & { it: TextItem } =>
                 isText(s.it) && !(s.it.parent != null && draggedFrames.has(s.it.parent))
         )
+        // the moving set's combined box at drag start; the live box is this
+        // shifted by (dx, dy), so snapping never has to re-measure mid-drag
+        const baseBounds = boundsOf(starts.map((s) => s.it))
+        const movingIds = new Set(starts.map((s) => s.it.id))
         const preDrag = snapshot() // pre-state: pushed once if the gesture actually moves anything
         let moved = false
         let shiftAxis: "x" | "y" | null = null // sticks once chosen; see mv()
@@ -1766,6 +1857,17 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
             } else {
                 shiftAxis = null // released — the next press re-decides fresh
             }
+            /* Smart guides: within a few screen px, the moving box's left /
+               center / right (and top / center / bottom) pull onto any other
+               layer's matching edge or center, and a guide line spans the two
+               while the snap holds. The nearest candidate wins per axis; an
+               axis Shift has locked to zero is left alone. */
+            const snapped = moved && baseBounds ? snapToGuides(baseBounds, dx, dy, movingIds, shiftAxis) : null
+            if (snapped) {
+                dx = snapped.dx
+                dy = snapped.dy
+            }
+            renderSnapGuides(snapped ? snapped.guides : [])
             syncDuplicate(ev.altKey || ev.ctrlKey)
             starts.forEach((s) => {
                 s.it.x = Math.round(s.x + dx)
@@ -1793,6 +1895,7 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
         }
         function up() {
             markDragging(false)
+            renderSnapGuides([])
             document.removeEventListener("pointermove", mv)
             document.removeEventListener("pointerup", up)
             document.removeEventListener("keydown", onModKey)
