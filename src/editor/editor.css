@@ -46,13 +46,15 @@
   font-size:11px;line-height:1;
   transform:scale(var(--inv));transform-origin:left bottom;
 }
-.fname{color:#6e6e6e;font-weight:500;cursor:pointer;border-radius:2px;padding:1px 2px;margin:-1px -2px;}
+/* label colors come from #canvas (--fname/--ftime), picked in applyBg() to
+   keep contrast against the current background color */
+.fname{color:var(--fname,#6e6e6e);font-weight:500;cursor:pointer;border-radius:2px;padding:1px 2px;margin:-1px -2px;}
 .flabel:hover .fname, .frame.selected .fname{color:var(--accent);}
 .fname[contenteditable="true"]{
   cursor:text;user-select:text;outline:none;color:#1c1c1c;
   box-shadow:0 0 0 1.5px var(--accent);background:#fff;
 }
-.ftime{color:#b0b0ae;font-weight:400;font-variant-numeric:tabular-nums;position:relative;top:0;}
+.ftime{color:var(--ftime,#b0b0ae);font-weight:400;font-variant-numeric:tabular-nums;position:relative;top:0;}
 .hide-times .ftime{display:none;}
 /* drawing a frame previews as a real (white) frame, not a selection */
 .frame-draft{
