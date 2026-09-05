@@ -136,7 +136,11 @@
 .titem.dragging{cursor:pointer;}
 /* hover / multi-select underlines are drawn in the #overlay (.tunder), not
    as text-decoration, so they stay a crisp 1px at any zoom */
-.tunder{position:absolute;height:1px;background:var(--accent);pointer-events:none;z-index:8;}
+/* the underline never adapts to the canvas background — always the fixed
+   selection blue, same as .selbox. (The frame name's hover/selected color
+   stays on var(--accent): on a light canvas that's the same blue; on a dark
+   one it adapts for contrast, unlike the underline.) */
+.tunder{position:absolute;height:1px;background:var(--sel-blue);pointer-events:none;z-index:8;}
 /* cursor:text while editing → CustomCursor swaps to the text beam. The
    1px border comes from the overlay (.selbox.editing). The element itself
    has no fill: the highlight is the browser's own selection, so it behaves
