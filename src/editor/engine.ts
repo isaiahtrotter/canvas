@@ -798,6 +798,9 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
             )
             el.addEventListener("dblclick", (e) => {
                 e.stopPropagation()
+                // already editing: this is a native double-click-to-select-word,
+                // not a request to start over (which would re-select everything)
+                if (el.getAttribute("contenteditable") === "true") return
                 startEditing(el, it)
             })
             world.appendChild(el)

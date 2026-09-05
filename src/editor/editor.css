@@ -90,16 +90,18 @@
    as text-decoration, so they stay a crisp 1px at any zoom */
 .tunder{position:absolute;height:1px;background:#008FF0;pointer-events:none;z-index:8;}
 /* cursor:text while editing → CustomCursor swaps to the text beam. The
-   1px border comes from the overlay (.selbox.editing); the fill covers
-   the whole text box. */
+   1px border comes from the overlay (.selbox.editing). The element itself
+   has no fill: the highlight is the browser's own selection, so it behaves
+   like a normal text editor — select-all on entry, click to place a bare
+   caret (no highlight), click-drag / double-click / shift-arrows to select
+   a range. With no padding the line box and the text box coincide, so a
+   full selection fills the selection box exactly. */
 .titem[contenteditable="true"]{
   cursor:text;user-select:text;outline:none;
-  background:rgba(12,140,233,.16);
+  background:transparent;
 }
-/* the element's own fill IS the highlight: with no padding the text box
-   and the line box coincide, so it fills the selection box exactly, and
-   the native highlight is turned off so nothing overlaps it */
-.titem[contenteditable="true"]::selection{background:transparent;}
+.titem[contenteditable="true"]::selection{background:rgba(12,140,233,.16);}
+.titem[contenteditable="true"]::-moz-selection{background:rgba(12,140,233,.16);}
 
 /* Figma-style selection overlay */
 .selbox{
