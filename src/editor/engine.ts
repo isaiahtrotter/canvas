@@ -405,7 +405,17 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
     const grid = root.querySelector<HTMLCanvasElement>("#grid")
     /* One line per integer world coordinate, each placed at its exact screen
        position (rounded to a device pixel) so frame edges — which sit on
-       integer coordinates — land on grid lines at any zoom, with no drift. */
+       integer coordinates — land on grid lines at any zoom, with no drift.
+
+       Color: the layer composites with mix-blend-mode:difference (CSS), so a
+       faint white line pushes whatever is under it — canvas, frame, text —
+       toward its opposite: about 12% darker on white, 12% lighter on black,
+       with no rim. One honest limit: any neutral overlay that lightens black
+       and darkens white has to cross zero somewhere between, and for white
+       that's exactly 50% gray, where the line fades out over a narrow band.
+       (Two layers with different tones were tried; their shifts oppose each
+       other between their zero points and only move the dead tone around.) */
+    const GRID_LINE = "rgba(255,255,255,.12)"
     function applyGrid() {
         if (!grid) return
         const on = prefs.grid && view.z >= GRID_FROM
@@ -423,17 +433,7 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
         const ctx = grid.getContext("2d")
         if (!ctx) return
         ctx.clearRect(0, 0, pw, ph)
-        // A flat translucent line reads fine against a background it
-        // contrasts with, but fades out entirely against a background
-        // close to its own color — a light gray line simply vanishes on a
-        // light gray canvas. A soft dark halo behind a bright line (a
-        // canvas shadow, not a second shape) guarantees an edge against
-        // any background: light where the canvas is dark, and the dark
-        // rim carries it where the canvas is light too, so it never
-        // disappears while still reading as a light grid overall.
-        ctx.shadowColor = "rgba(0,0,0,.55)"
-        ctx.shadowBlur = 1.4 * dpr
-        ctx.fillStyle = "rgba(255,255,255,.85)"
+        ctx.fillStyle = GRID_LINE
         const z = view.z
         for (let k = Math.ceil(-view.x / z); k <= Math.floor((W - view.x) / z); k++)
             ctx.fillRect(Math.round((view.x + k * z) * dpr), 0, 1, ph)
