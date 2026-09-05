@@ -839,7 +839,6 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
         canvas.querySelectorAll<HTMLElement>(".ftime").forEach((t) => {
             t.textContent = relTime(Number(t.dataset.t))
         })
-        if (heat) applyHeat()
     }
     const timesTimer = setInterval(refreshTimes, 30000)
 
@@ -882,12 +881,15 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
         return [0, 1, 2].map((k) => Math.round(a[k] + (b[k] - a[k]) * f)) as [number, number, number]
     }
     const rgbCss = (c: [number, number, number]) => `rgb(${c[0]},${c[1]},${c[2]})`
+    let heatTimer = null // 1s refresh while on; the CSS transition smooths each step
     function applyHeat() {
         const now = Date.now()
         const bgRgb = hexToRgb(HEAT_BG)
         items.forEach((it) => {
             const node = canvas.querySelector<HTMLElement>('[data-id="' + it.id + '"]')
             if (!node) return
+            // stagger the glow so frames don't all breathe together
+            node.style.setProperty("--phase", ((it.id * 0.37) % 1).toFixed(3))
             const c = heatColor(heatFromAge((now - (it.updatedAt ?? 0)) / 1000))
             if (isFrame(it)) {
                 // frames sit a step darker than their text so text edited at the
@@ -930,6 +932,8 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
         applyBg() // canvas background + label colors for the thermal look
         clearTimeout(heatTransTimer)
         heatTransTimer = setTimeout(() => canvas.classList.remove("heat-transition"), 350)
+        clearInterval(heatTimer)
+        if (on) heatTimer = setInterval(applyHeat, 1000)
         showToast(on ? "Heatmap on" : "Heatmap off")
     }
     function toggleHeat() {
@@ -3285,6 +3289,7 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
         docListeners.forEach(([t, f]) => document.removeEventListener(t, f))
         window.removeEventListener("blur", onWindowBlur)
         clearInterval(timesTimer)
+        clearInterval(heatTimer)
         clearTimeout(heatTransTimer)
         clearTimeout(toastTimer)
         clearTimeout(nudgeTimer)

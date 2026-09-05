@@ -88,19 +88,31 @@
      (1/zoom) to keep a constant 6 screen px gap above the frame at any zoom —
      otherwise the gap grows with zoom and the label drifts away from it */
   margin-bottom:calc(6px * var(--inv));
+  /* the label is counter-scaled by --inv, so its screen width is its layout
+     width while the frame's screen width is 100% ÷ --inv. Cap it there so a
+     zoomed-out frame never has a label wider than itself — the name
+     truncates with … first (it shrinks far more readily), then the time. */
+  max-width:calc(100% / var(--inv));
   display:flex;align-items:baseline;gap:7px;white-space:nowrap;
   font-size:11px;line-height:1;
   transform:scale(var(--inv));transform-origin:left bottom;
 }
 /* label colors come from #canvas (--fname/--ftime), picked in applyBg() to
    keep contrast against the current background color */
-.fname{color:var(--fname,var(--text-2));font-weight:500;cursor:pointer;border-radius:2px;padding:1px 2px;margin:-1px -2px;}
+.fname{
+  color:var(--fname,var(--text-2));font-weight:500;cursor:pointer;border-radius:2px;padding:1px 2px;margin:-1px -2px;
+  flex:0 1000 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;
+}
 .flabel:hover .fname, .frame.selected .fname{color:var(--accent);}
 .fname[contenteditable="true"]{
   cursor:text;user-select:text;outline:none;color:#1c1c1c;
   box-shadow:0 0 0 1.5px var(--accent);background:#fff;
+  overflow:visible;text-overflow:clip; /* show the whole name while renaming */
 }
-.ftime{color:var(--ftime,var(--text-4));font-weight:400;font-variant-numeric:tabular-nums;position:relative;top:0;}
+.ftime{
+  color:var(--ftime,var(--text-4));font-weight:400;font-variant-numeric:tabular-nums;position:relative;top:0;
+  flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;
+}
 .hide-times .ftime{display:none;}
 /* drawing a frame previews as a real (white) frame, not a selection */
 .frame-draft{
@@ -162,13 +174,52 @@
    canvas background and label colors come from applyBg(). Transitions are
    scoped to .heat-transition (added for 350ms around a toggle) so ordinary
    fill changes never animate. ---- */
+/* The frame's heat fill lives on a ::before layer so the blur and glow can
+   sit on the fill alone — the name and timestamp above it stay crisp. The
+   ::before exists at all times (transparent) so the toggle can cross-fade. */
+.frame::before{
+  content:'';position:absolute;inset:0;background:transparent;pointer-events:none;
+}
+/* the glow: a shadow-only layer behind the frame (z-index:-1 in #world's
+   stacking context), pulsing slowly; --phase staggers frames so they don't
+   breathe in lockstep. Radii scale by --inv so the glow is the same size on
+   screen at any zoom. */
+.frame::after{
+  content:'';position:absolute;inset:0;pointer-events:none;z-index:-1;opacity:0;
+}
+.canvas.heat .frame{background:transparent !important;}
+.canvas.heat .frame::before{
+  background:var(--heat-frame, #1a0533);
+  filter:blur(calc(.8px * var(--inv)));
+}
+.canvas.heat .frame::after{
+  box-shadow:0 0 calc(34px * var(--inv)) calc(8px * var(--inv)) var(--heat-frame, #1a0533);
+  animation:heatglow 3.6s ease-in-out infinite;
+  animation-delay:calc(var(--phase, 0) * -3.6s);
+}
+.canvas.heat .titem{
+  color:var(--heat, #fbea6a) !important;
+  filter:blur(calc(.8px * var(--inv)));
+  animation:heatglow-text 3.6s ease-in-out infinite;
+  animation-delay:calc(var(--phase, 0) * -3.6s);
+}
+@keyframes heatglow{0%,100%{opacity:.3;}50%{opacity:.85;}}
+@keyframes heatglow-text{
+  0%,100%{text-shadow:0 0 calc(6px * var(--inv)) var(--heat, #fbea6a);}
+  50%{text-shadow:0 0 calc(18px * var(--inv)) var(--heat, #fbea6a);}
+}
+/* steady state: applyHeat() refreshes --heat every second, and a 1s linear
+   transition on the properties that read it turns those steps into a drift */
+.canvas.heat .frame::before{transition:background-color 1s linear;}
+.canvas.heat .frame::after{transition:box-shadow 1s linear;}
+.canvas.heat .titem{transition:color 1s linear, text-shadow 1s linear;}
+/* toggling: 300ms ease-out cross-fade (after the steady-state rules so it wins) */
 .canvas.heat-transition{transition:background-color .3s ease-out;}
-.canvas.heat-transition .world{transition:filter .3s ease-out;}
 .canvas.heat-transition .frame{transition:background-color .3s ease-out;}
-.canvas.heat-transition .titem, .canvas.heat-transition .fname, .canvas.heat-transition .ftime{transition:color .3s ease-out;}
-.canvas.heat .world{filter:blur(.8px);}
-.canvas.heat .frame{background:var(--heat-frame, #1a0533) !important;}
-.canvas.heat .titem{color:var(--heat, #fbea6a) !important;}
+.canvas.heat-transition .frame::before{transition:background-color .3s ease-out, filter .3s ease-out;}
+.canvas.heat-transition .frame::after{transition:opacity .3s ease-out;}
+.canvas.heat-transition .titem{transition:color .3s ease-out, filter .3s ease-out, text-shadow .3s ease-out;}
+.canvas.heat-transition .fname, .canvas.heat-transition .ftime{transition:color .3s ease-out;}
 /* the key: gradient bar plus labels at their heat positions, left-centered */
 .heatkey{
   position:absolute;left:12px;top:50%;transform:translateY(-50%);z-index:20;
