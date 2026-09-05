@@ -1621,6 +1621,7 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
 
         const startX = e.clientX,
             startY = e.clientY
+        const startWorld = toWorld(startX, startY) // for the shift-lock's frame-under check
         const starts = selectedItems().map((s) => ({
             it: s,
             x: s.x,
@@ -1719,11 +1720,21 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
         document.addEventListener("keydown", onModKey)
         document.addEventListener("keyup", onModKey)
         function mv(ev: PointerEvent) {
-            const dx = (ev.clientX - startX) / view.z,
+            let dx = (ev.clientX - startX) / view.z,
                 dy = (ev.clientY - startY) / view.z
             if (!moved && (Math.abs(dx) * view.z > 2 || Math.abs(dy) * view.z > 2)) {
                 moved = true
                 pushHistory(preDrag)
+            }
+            // Shift locks the drag to a straight line, horizontal or vertical —
+            // whichever the total displacement leans toward. Recomputed fresh
+            // from the pointer's total distance from the ORIGINAL start every
+            // time (dx/dy are never accumulated), so switching which axis wins
+            // mid-drag still measures from where the item actually started,
+            // never from wherever the lock had it a moment ago.
+            if (ev.shiftKey) {
+                if (Math.abs(dx) >= Math.abs(dy)) dy = 0
+                else dx = 0
             }
             syncDuplicate(ev.altKey || ev.ctrlKey)
             starts.forEach((s) => {
@@ -1731,7 +1742,10 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
                 s.it.y = Math.round(s.y + dy)
             })
             if (moved && freeTexts.length) {
-                const under = frameAt(toWorld(ev.clientX, ev.clientY), draggedFrames)
+                // use the same (possibly axis-locked) point the item is actually
+                // drawn at, not the raw cursor — otherwise membership could pick
+                // a frame the item doesn't visually appear to be over
+                const under = frameAt({ x: startWorld.x + dx, y: startWorld.y + dy }, draggedFrames)
                 freeTexts.forEach((s) => (s.it.parent = under ? under.id : null))
             }
             items.forEach((i2) => {
