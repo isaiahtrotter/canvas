@@ -38,11 +38,12 @@ export interface Fill {
     alpha: number
 }
 /** What the editor tells its host about the Fill control. */
+export type FillMode = "selection" | "background"
 export interface EditorHooks {
-    /** The fill swatch was clicked: open a picker anchored to `anchor`. */
-    onFillOpen?: (anchor: DOMRect, fill: Fill) => void
-    /** Selection changed while the host may be showing a picker: `null` means nothing is selected. */
-    onFillChange?: (fill: Fill | null) => void
+    /** The fill swatch was clicked: open a picker anchored to `anchor`, for the selection or the canvas background. */
+    onFillOpen?: (anchor: DOMRect, fill: Fill, mode: FillMode) => void
+    /** Selection (or, in background mode, the background color) changed while the host may be showing a picker. */
+    onFillChange?: (fill: Fill, mode: FillMode) => void
 }
 export interface EditorAPI {
     /** Apply a fill to every selected layer. The first call after beginFillGesture() logs one undo step. */
@@ -126,6 +127,7 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
        and, if it moved, the one it came from. Undo/redo set `restoring` so a
        restored snapshot keeps the timestamps it was saved with. */
     let restoring = false
+    let carryingFrameDrag = false // true only while a frame-drag's own emit() is diffing
     const lastText = new Map<number, { sig: string; x: number; y: number }>()
     function textSig(it: TextItem) {
         return [it.x, it.y, it.text, it.size, it.font, it.weight, it.fill, it.alpha].join("|")
@@ -138,7 +140,7 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
             const sig = textSig(t)
             const prev = lastText.get(t.id)
             if (!prev || prev.sig !== sig) {
-                if (!restoring) {
+                if (!restoring && !carryingFrameDrag) {
                     const bump = (f: FrameItem | null) => {
                         if (f) f.updatedAt = now
                     }
@@ -485,8 +487,116 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
         document.addEventListener("pointermove", mv)
         document.addEventListener("pointerup", up)
     }
-    const onWindowBlur = () => setSpaceDown(false)
+    const onWindowBlur = () => {
+        setSpaceDown(false)
+        setAltDown(false)
+    }
     window.addEventListener("blur", onWindowBlur)
+
+    /* ---- Option/Alt measurement: hold the key and hover another layer to see
+       the pixel gap to the current selection. Hovering a frame instead draws
+       two guides — horizontal and vertical — to whichever of its edges are
+       nearest the cursor, each labeled with the distance from the selection. ---- */
+    let altDown = false
+    let measureBox: HTMLElement | null = null
+    function setAltDown(v: boolean) {
+        if (altDown === v) return
+        altDown = v
+        if (!v) clearMeasure()
+    }
+    function clearMeasure() {
+        measureBox?.remove()
+        measureBox = null
+    }
+    function itemBounds(it: Item) {
+        const { w, h } = nodeSize(it)
+        return { x: it.x, y: it.y, w, h }
+    }
+    function addMeasureLine(
+        container: HTMLElement,
+        x1: number,
+        y1: number,
+        x2: number,
+        y2: number,
+        dist: number
+    ) {
+        const horizontal = y1 === y2
+        const line = document.createElement("div")
+        line.className = "measure-line"
+        if (horizontal) {
+            line.style.left = Math.min(x1, x2) + "px"
+            line.style.top = y1 + "px"
+            line.style.width = Math.abs(x2 - x1) + "px"
+            line.style.height = "calc(1px * var(--inv))"
+        } else {
+            line.style.left = x1 + "px"
+            line.style.top = Math.min(y1, y2) + "px"
+            line.style.width = "calc(1px * var(--inv))"
+            line.style.height = Math.abs(y2 - y1) + "px"
+        }
+        container.appendChild(line)
+        const label = document.createElement("div")
+        label.className = "measure-label"
+        label.textContent = Math.round(Math.abs(dist)) + "px"
+        label.style.left = (x1 + x2) / 2 + "px"
+        label.style.top = (y1 + y2) / 2 + "px"
+        container.appendChild(label)
+    }
+    // two boxes side by side or stacked: the gap line for whichever axis
+    // they don't overlap on (a la Figma's "spacing to sibling")
+    function measureGap(container: HTMLElement, a, b) {
+        const overlapX = Math.max(a.x, b.x) < Math.min(a.x + a.w, b.x + b.w)
+        const overlapY = Math.max(a.y, b.y) < Math.min(a.y + a.h, b.y + b.h)
+        if (!overlapY) {
+            const [upper, lower] = a.y < b.y ? [a, b] : [b, a]
+            const os = Math.max(a.x, b.x),
+                oe = Math.min(a.x + a.w, b.x + b.w)
+            const cx = oe > os ? (os + oe) / 2 : (a.x + a.w / 2 + b.x + b.w / 2) / 2
+            addMeasureLine(container, cx, upper.y + upper.h, cx, lower.y, lower.y - (upper.y + upper.h))
+        }
+        if (!overlapX) {
+            const [left, right] = a.x < b.x ? [a, b] : [b, a]
+            const os = Math.max(a.y, b.y),
+                oe = Math.min(a.y + a.h, b.y + b.h)
+            const cy = oe > os ? (os + oe) / 2 : (a.y + a.h / 2 + b.y + b.h / 2) / 2
+            addMeasureLine(container, left.x + left.w, cy, right.x, cy, right.x - (left.x + left.w))
+        }
+    }
+    // distance from the selection to whichever pair of the frame's edges
+    // (one vertical, one horizontal) the cursor sits nearest to
+    function measureToFrame(container: HTMLElement, sel, frame, mouse: { x: number; y: number }) {
+        const edgeV = mouse.x - frame.x <= frame.x + frame.w - mouse.x ? "l" : "r"
+        const edgeH = mouse.y - frame.y <= frame.y + frame.h - mouse.y ? "t" : "b"
+        const frameVX = edgeV === "l" ? frame.x : frame.x + frame.w
+        const selVX = edgeV === "l" ? sel.x : sel.x + sel.w
+        addMeasureLine(container, frameVX, mouse.y, selVX, mouse.y, selVX - frameVX)
+        const frameHY = edgeH === "t" ? frame.y : frame.y + frame.h
+        const selHY = edgeH === "t" ? sel.y : sel.y + sel.h
+        addMeasureLine(container, mouse.x, frameHY, mouse.x, selHY, selHY - frameHY)
+    }
+    function updateMeasure(hovered: Item | null | undefined, mouse: { x: number; y: number }) {
+        clearMeasure()
+        if (!altDown || !hovered || selection.has(hovered.id)) return
+        const sel = selectionBounds()
+        if (!sel) return
+        measureBox = document.createElement("div")
+        measureBox.className = "measure"
+        if (isFrame(hovered)) measureToFrame(measureBox, sel, itemBounds(hovered), mouse)
+        else measureGap(measureBox, sel, itemBounds(hovered))
+        world.appendChild(measureBox)
+    }
+    canvas.addEventListener("pointermove", (e: PointerEvent) => {
+        // e.buttons !== 0 means some other gesture (drag, resize, pan...) owns
+        // this move — Alt already means "duplicate" mid-drag, so stay out of the way
+        if (!altDown || e.buttons !== 0) {
+            if (measureBox) clearMeasure()
+            return
+        }
+        const t = (e.target as HTMLElement).closest<HTMLElement>(".titem, .frame")
+        const hovered = t ? items.find((it) => it.id === Number(t.dataset.id)) : null
+        updateMeasure(hovered, toWorld(e.clientX, e.clientY))
+    })
+    canvas.addEventListener("pointerleave", () => clearMeasure())
 
     /* ---- tools: V = move/select, F = draw a frame ---- */
     type Tool = "move" | "frame"
@@ -973,11 +1083,13 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
             document.removeEventListener("pointermove", mv)
             document.removeEventListener("pointerup", up)
             if (moved) {
-                const now = Date.now()
-                starts.forEach((s) => {
-                    if (isFrame(s.it)) s.it.updatedAt = now
-                })
+                // dragging a frame carries its contents along for the ride —
+                // that's not a content edit, so don't let the position diff
+                // below bump the frame's timestamp for text that just came along
+                const draggedFrame = starts.some((s) => isFrame(s.it))
+                if (draggedFrame) carryingFrameDrag = true
                 emit()
+                carryingFrameDrag = false
             }
         }
         document.addEventListener("pointermove", mv)
@@ -1144,6 +1256,10 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
             e.preventDefault()
             return
         }
+        if (e.key === "Alt") {
+            setAltDown(true)
+            return
+        }
         const mod = e.metaKey || e.ctrlKey
         if (mod && (e.key === "=" || e.key === "+")) {
             e.preventDefault()
@@ -1202,6 +1318,7 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
     })
     onDoc("keyup", (e) => {
         if (e.code === "Space") setSpaceDown(false)
+        if (e.key === "Alt") setAltDown(false)
     })
 
     /* version buttons in the canvas pill */
@@ -1636,11 +1753,19 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
         alignBtns.forEach((b) => (b.disabled = none))
     }
 
-    /* ---- fill: swatch + hex + alpha for the selection; the host renders the picker ---- */
+    /* ---- fill: swatch + hex + alpha for the selection; with nothing
+       selected the same row controls the canvas background instead. The
+       host renders the picker either way (setFill routes to whichever
+       applies at call time). ---- */
     const fillRow = root.querySelector<HTMLElement>("#fillRow")
+    const fillLabel = root.querySelector<HTMLElement>("#fillLabel")
     const fillSwatch = fillRow.querySelector<HTMLElement>(".swatch")
     const fillHex = fillRow.querySelector<HTMLElement>(".hex")
     const fillPct = fillRow.querySelector<HTMLElement>(".pct")
+    let bg = { hex: "#fafaf9", alpha: 100 }
+    function applyBg() {
+        canvas.style.backgroundColor = rgbaCss(bg.hex, bg.alpha)
+    }
     // shared fill of the selection, or null when empty / mixed
     function selectionFill(): { fill: Fill | null; mixed: boolean } {
         const sel = selectedItems()
@@ -1649,9 +1774,22 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
         const mixed = sel.some((it) => it.fill !== f.hex || it.alpha !== f.alpha)
         return { fill: mixed ? null : f, mixed }
     }
+    function fillMode(): FillMode {
+        return selection.size ? "selection" : "background"
+    }
     function updateFill() {
+        const mode = fillMode()
+        fillLabel.textContent = mode === "background" ? "Background color" : "Fill"
+        fillRow.classList.toggle("disabled", false) // always actionable now — selection fill, or the background
+        if (mode === "background") {
+            fillRow.classList.remove("mixed")
+            fillSwatch.style.background = rgbaCss(bg.hex, bg.alpha)
+            fillHex.textContent = bg.hex.replace("#", "").toUpperCase()
+            fillPct.textContent = bg.alpha + "%"
+            if (hooks.onFillChange) hooks.onFillChange({ ...bg }, mode)
+            return
+        }
         const { fill, mixed } = selectionFill()
-        fillRow.classList.toggle("disabled", !selection.size)
         fillRow.classList.toggle("mixed", mixed)
         if (fill) {
             fillSwatch.style.background = rgbaCss(fill.hex, fill.alpha)
@@ -1670,20 +1808,25 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
             fillSelSig = sig
             if (fillGesture) fillPre = snapshot()
         }
-        if (hooks.onFillChange)
-            hooks.onFillChange(selection.size ? fill ?? { hex: sel0Fill(), alpha: 100 } : null)
+        if (hooks.onFillChange) hooks.onFillChange(fill ?? { hex: sel0Fill(), alpha: 100 }, mode)
     }
     function sel0Fill() {
         const sel = selectedItems()
         return sel.length ? sel[0].fill : "#1c1c1c"
     }
     fillRow.addEventListener("click", () => {
-        if (!selection.size || !hooks.onFillOpen) return
+        if (!hooks.onFillOpen) return
+        const mode = fillMode()
+        if (mode === "background") {
+            hooks.onFillOpen(fillRow.getBoundingClientRect(), { ...bg }, mode)
+            return
+        }
         const { fill } = selectionFill()
-        hooks.onFillOpen(fillRow.getBoundingClientRect(), fill ?? { hex: sel0Fill(), alpha: 100 })
+        hooks.onFillOpen(fillRow.getBoundingClientRect(), fill ?? { hex: sel0Fill(), alpha: 100 }, mode)
     })
     // A picker session is one gesture: the snapshot taken when it opens (or
     // when the selection changes under it) is pushed once, on the first change.
+    // (The background isn't part of item history, so it has no gesture of its own.)
     let fillPre = null
     let fillGesture = false
     let fillSelSig = ""
@@ -1691,6 +1834,13 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
         if (!isHex(hex)) return
         hex = (hex.startsWith("#") ? hex : "#" + hex).toLowerCase()
         alpha = Math.max(0, Math.min(100, Math.round(alpha)))
+        if (fillMode() === "background") {
+            if (bg.hex === hex && bg.alpha === alpha) return
+            bg = { hex, alpha }
+            applyBg()
+            updateFill()
+            return
+        }
         const sel = selectedItems()
         if (!sel.length) return
         if (sel.every((it) => it.fill === hex && it.alpha === alpha)) return
@@ -1781,12 +1931,11 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
         moveSelection(0, dy)
         emit()
     })
+    // repositioning a frame (typed X/Y) isn't a content edit either
     function moveSelection(dx: number, dy: number) {
-        const now = Date.now()
         selectedItems().forEach((it) => {
             it.x += dx
             it.y += dy
-            if (isFrame(it)) it.updatedAt = now
         })
     }
     dimW.addEventListener("focus", armPos)
@@ -2156,6 +2305,7 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
     centerDefaultItems() // needs real measurements from the render above
     seedDemoFrame()
     applyView()
+    applyBg()
     renderCanvas() // re-render with the centered positions
     buildPanel()
     updateProps()

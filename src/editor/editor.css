@@ -31,7 +31,7 @@
   box-shadow:0 1px 3px rgba(0,0,0,.06);
 }
 .flabel{
-  position:absolute;left:-1px;bottom:100%;margin-bottom:6px;
+  position:absolute;left:0;bottom:100%;margin-bottom:6px;
   display:flex;align-items:baseline;gap:7px;white-space:nowrap;
   font-size:11px;line-height:1;
   transform:scale(var(--inv));transform-origin:left bottom;
@@ -117,6 +117,16 @@
 .marquee{
   position:absolute;border:calc(1px * var(--inv)) solid #008FF0;background:rgba(0,143,240,.15);
   pointer-events:none;z-index:9;
+}
+
+/* Option/Alt distance measurement: a line per axis plus a small pill label */
+.measure{position:absolute;left:0;top:0;pointer-events:none;z-index:12;}
+.measure-line{position:absolute;background:#f24822;pointer-events:none;}
+.measure-label{
+  position:absolute;transform:translate(-50%,-50%) scale(var(--inv));transform-origin:center;
+  background:#f24822;color:#fff;font-size:10px;font-weight:600;line-height:1;
+  padding:2px 5px;border-radius:4px;white-space:nowrap;pointer-events:none;
+  font-variant-numeric:tabular-nums;
 }
 
 /* ---- floating canvas chrome: tool pill (top-left), zoom pill (bottom-left) ---- */

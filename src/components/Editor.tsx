@@ -1,15 +1,15 @@
 import { useEffect, useRef, useState } from "react"
-import { mountEditor, type EditorAPI, type Fill } from "../editor/engine"
+import { mountEditor, type EditorAPI, type Fill, type FillMode } from "../editor/engine"
 import ColorPicker from "./ColorPicker"
 import "../editor/editor.css"
 
 interface EditorProps {
-    canvasColor?: string
     cornerRadius?: number
     borderColor?: string
 }
 
 interface PickerState extends Fill {
+    mode: FillMode
     top: number
 }
 
@@ -19,11 +19,12 @@ interface PickerState extends Fill {
  * a second effect only paints the cosmetic props onto the mounted DOM.
  *
  * The one piece of UI React owns is the fill color picker: the engine reports
- * swatch clicks and selection changes through hooks, and we push colors back
- * through the returned API.
+ * swatch clicks and fill/background changes through hooks, and we push
+ * colors back through the returned API. The canvas background color itself
+ * is owned by the engine (via the Fill row, once nothing is selected) — not
+ * a prop here.
  */
 export function Editor({
-    canvasColor = "#fafaf9",
     cornerRadius = 10,
     borderColor = "#dedede",
 }: EditorProps) {
@@ -37,18 +38,20 @@ export function Editor({
         const root = ref.current
         if (!root) return
         api.current = mountEditor(root, {
-            onFillOpen: (anchor, fill) => {
+            onFillOpen: (anchor, fill, mode) => {
                 const wrap = wrapRef.current!.getBoundingClientRect()
                 setPicker((p) => {
                     if (p) return null // clicking the swatch again closes it
-                    api.current?.beginFillGesture()
-                    return { ...fill, top: anchor.top - wrap.top }
+                    if (mode === "selection") api.current?.beginFillGesture()
+                    return { ...fill, mode, top: anchor.top - wrap.top }
                 })
             },
-            onFillChange: (fill) => {
+            onFillChange: (fill, mode) => {
                 setPicker((p) => {
                     if (!p) return p
-                    if (!fill) return null // nothing selected anymore
+                    // selection emptied (or filled) while open — the row now
+                    // means something else, so close rather than retarget
+                    if (mode !== p.mode) return null
                     return { ...p, ...fill }
                 })
             },
@@ -67,11 +70,7 @@ export function Editor({
             appEl.style.borderRadius = cornerRadius + "px"
             appEl.style.borderColor = borderColor
         }
-        // backgroundColor only (not the `background` shorthand) so any
-        // background-image from the CSS class survives untouched.
-        const canvasEl = root.querySelector<HTMLElement>("#canvas")
-        if (canvasEl) canvasEl.style.backgroundColor = canvasColor
-    }, [canvasColor, cornerRadius, borderColor])
+    }, [cornerRadius, borderColor])
 
     // Close on outside click / Escape; mirror open state onto the swatch row.
     useEffect(() => {

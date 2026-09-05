@@ -46,12 +46,20 @@ reference/               Original Framer components this was ported from
 - Double-click the name to rename · drag any corner or edge handle to resize (down to 1×1) · W/H editable in the sidebar
 - Frames are selected and dragged by their title; clicking the body acts like empty canvas. Dragging a frame carries the text sitting inside it; deleting a frame deletes that text too
 - Moving or editing anything inside a frame bumps the frame's timestamp
-- Duplicating a frame keeps its timestamp; undoing an edit restores the pre-edit timestamp
+- Duplicating or moving a frame keeps its timestamp; only edits to its contents bump it. Undoing
+  restores whatever timestamp was in effect at that point in history
 
 **Fill**
 - The Fill row in the sidebar shows the selection's color and alpha (or "Mixed"); click it
   to open the color picker (ported from `reference/color_picker.tsx`). Changes apply live to
   every selected layer — frame backgrounds and text color — and one picker session is one undo step
+- With nothing selected, the same row becomes **Background color** and controls the canvas
+  background instead (not part of item undo history)
+
+**Measuring**
+- Hold Option (Alt on Windows) and hover another layer to see the pixel gap to the current
+  selection. Hovering a frame instead draws two guides to whichever of its edges — one vertical,
+  one horizontal — sit nearest the cursor
 
 **Text**
 - Click / shift-click / marquee-drag to select text layers; drag to move. A marquee only picks up a
