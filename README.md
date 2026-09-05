@@ -33,6 +33,9 @@ reference/               Original Framer components this was ported from
 
 ## Interactions
 
+The document (layers, background, pan/zoom) is saved to `localStorage` as you work and restored
+on refresh. Clear the `canvas.doc.v1` key to start over with the demo content.
+
 **Canvas**
 - Scroll / pinch to zoom (10%–400%), anchored under the cursor · ⌘/Ctrl `+` `−` `0` · zoom pill bottom-left
 - Hold Space and drag, or middle-mouse drag, to pan

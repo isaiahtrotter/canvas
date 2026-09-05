@@ -118,6 +118,7 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
     function emit() {
         touchParentFrames()
         listeners.forEach((fn) => fn())
+        scheduleSave()
     }
 
     /* A frame's "edited" time also moves when anything inside it changes.
@@ -255,22 +256,53 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
         return addItem({ ...(rest as TextItem), x, y })
     }
 
-    addItem({
-        x: 60,
-        y: 70,
-        text: "select multiple",
-        size: 32,
-        weight: 400,
-    })
-    addItem({ x: 60, y: 130, text: "lines of text", size: 20, weight: 400 })
-    addItem({
-        x: 60,
-        y: 180,
-        text: "and use the drop down",
-        size: 16,
-        weight: 400,
-    })
-    addItem({ x: 60, y: 220, text: "to edit them", size: 14, weight: 400 })
+    function seedDemoText() {
+        addItem({ x: 60, y: 70, text: "select multiple", size: 32, weight: 400 })
+        addItem({ x: 60, y: 130, text: "lines of text", size: 20, weight: 400 })
+        addItem({ x: 60, y: 180, text: "and use the drop down", size: 16, weight: 400 })
+        addItem({ x: 60, y: 220, text: "to edit them", size: 14, weight: 400 })
+    }
+
+    /* ---- persistence: the document (layers, counters, background, view)
+       lives in localStorage so a refresh picks up where you left off ---- */
+    const DOC_KEY = "canvas.doc.v1"
+    let saveTimer = null
+    function saveDoc() {
+        try {
+            localStorage.setItem(
+                DOC_KEY,
+                JSON.stringify({ items, nextId, frameCount, bg, view })
+            )
+        } catch (_) {
+            /* storage unavailable or full — the session still works, just doesn't persist */
+        }
+    }
+    function scheduleSave() {
+        clearTimeout(saveTimer)
+        saveTimer = setTimeout(saveDoc, 150)
+    }
+    function loadDoc(): boolean {
+        try {
+            const raw = localStorage.getItem(DOC_KEY)
+            if (!raw) return false
+            const d = JSON.parse(raw)
+            if (!Array.isArray(d.items)) return false
+            d.items.forEach((it) => items.push(it))
+            nextId = typeof d.nextId === "number" ? d.nextId : items.reduce((m, it) => Math.max(m, it.id), 0) + 1
+            frameCount = typeof d.frameCount === "number" ? d.frameCount : items.filter(isFrame).length
+            if (d.bg && isHex(d.bg.hex)) bg = { hex: d.bg.hex, alpha: d.bg.alpha ?? 100 }
+            if (d.view && Number.isFinite(d.view.x) && Number.isFinite(d.view.y) && d.view.z > 0)
+                Object.assign(view, d.view)
+            return true
+        } catch (_) {
+            return false
+        }
+    }
+    const onPageHide = () => {
+        clearTimeout(saveTimer)
+        saveDoc()
+    }
+    window.addEventListener("pagehide", onPageHide)
 
     function selectedItems(): Item[] {
         return items.filter((it) => selection.has(it.id))
@@ -312,6 +344,7 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
         // screen-space chrome has to follow the view
         renderSelectionOverlay()
         refreshMeasure()
+        scheduleSave()
     }
 
     /* ---- minimap: fades in above the zoom pill once nothing is on screen.
@@ -441,10 +474,13 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
     }
     function placeScreenRect(el: HTMLElement, r: { x: number; y: number; w: number; h: number }) {
         const p = toScreen(r.x, r.y)
-        el.style.left = p.x + "px"
-        el.style.top = p.y + "px"
-        el.style.width = r.w * view.z + "px"
-        el.style.height = r.h * view.z + "px"
+        // snap edges to whole pixels so the 1px strokes stay crisp
+        const l = Math.round(p.x),
+            t = Math.round(p.y)
+        el.style.left = l + "px"
+        el.style.top = t + "px"
+        el.style.width = Math.round(p.x + r.w * view.z) - l + "px"
+        el.style.height = Math.round(p.y + r.h * view.z) - t + "px"
     }
     // zoom so the world point under canvas-relative (cx, cy) stays put
     function zoomAt(factor: number, cx: number, cy: number) {
@@ -555,8 +591,10 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
         dist: number
     ) {
         if (Math.abs(dist) < 0.5) return // touching — nothing to show
-        const a = toScreen(x1, y1),
-            b = toScreen(x2, y2)
+        const a0 = toScreen(x1, y1),
+            b0 = toScreen(x2, y2)
+        const a = { x: Math.round(a0.x), y: Math.round(a0.y) },
+            b = { x: Math.round(b0.x), y: Math.round(b0.y) }
         const horizontal = y1 === y2
         const line = document.createElement("div")
         line.className = "measure-line"
@@ -632,7 +670,8 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
     canvas.addEventListener("pointermove", (e: PointerEvent) => {
         // remember what's under the pointer even without Alt, so pressing Alt
         // with a still mouse can show the measurement right away
-        const nowHover = (e.target as HTMLElement).closest<HTMLElement>(".titem, .frame")
+        const nowHover =
+            e.buttons !== 0 ? lastHover : (e.target as HTMLElement).closest<HTMLElement>(".titem, .frame")
         if (nowHover !== lastHover) {
             lastHover = nowHover
             renderUnderlines()
@@ -818,8 +857,8 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
         const blockBottom = items[lastIdx].y + rects[lastIdx].h
         const shiftY = canvasH / 2 - (blockTop + blockBottom) / 2
         items.forEach((it, i) => {
-            it.x = canvasW / 2 - rects[i].w / 2 // center each line horizontally
-            it.y = it.y + shiftY // recenter the whole stack vertically
+            it.x = Math.round(canvasW / 2 - rects[i].w / 2) // center each line horizontally
+            it.y = Math.round(it.y + shiftY) // recenter the whole stack vertically
         })
     }
 
@@ -841,7 +880,11 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
     function nodeSize(it: Item) {
         if (isFrame(it)) return { w: it.w, h: it.h }
         const node = canvas.querySelector<HTMLElement>('[data-id="' + it.id + '"]')
-        return node ? { w: node.offsetWidth, h: node.offsetHeight } : { w: 0, h: 0 }
+        if (!node) return { w: 0, h: 0 }
+        // getBoundingClientRect is fractional (offsetWidth/Height round), and
+        // includes the zoom — divide it back out to get world units
+        const r = node.getBoundingClientRect()
+        return { w: r.width / view.z, h: r.height / view.z }
     }
     function boundsOf(list: Item[]) {
         if (!list.length) return null
@@ -902,9 +945,9 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
             const a = toScreen(it.x, y)
             const u = document.createElement("div")
             u.className = "tunder"
-            u.style.left = a.x + "px"
-            u.style.top = a.y + "px"
-            u.style.width = w * view.z + "px"
+            u.style.left = Math.round(a.x) + "px"
+            u.style.top = Math.round(a.y) + "px"
+            u.style.width = Math.round(a.x + w * view.z) - Math.round(a.x) + "px"
             overlay.appendChild(u)
         })
     }
@@ -1155,8 +1198,8 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
                 markDragging(true) // the re-render dropped the class
             }
             starts.forEach((s) => {
-                s.it.x = s.x + dx
-                s.it.y = s.y + dy
+                s.it.x = Math.round(s.x + dx)
+                s.it.y = Math.round(s.y + dy)
             })
             items.forEach((i2) => {
                 const node = canvas.querySelector<HTMLElement>(
@@ -1953,6 +1996,7 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
             bg = { hex, alpha }
             applyBg()
             updateFill()
+            scheduleSave()
             return
         }
         const sel = selectedItems()
@@ -2444,11 +2488,17 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
         }
     })
 
-    renderCanvas()
-    centerDefaultItems() // needs real measurements from the render above
-    seedDemoFrame()
+    if (!loadDoc()) {
+        seedDemoText()
+        renderCanvas()
+        centerDefaultItems() // needs real measurements from the render above
+        seedDemoFrame()
+    }
     applyView()
     applyBg()
+    restoring = true
+    touchParentFrames() // prime lastText without bumping anything
+    restoring = false
     renderCanvas() // re-render with the centered positions
     buildPanel()
     updateProps()
@@ -2462,6 +2512,8 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
         clearInterval(timesTimer)
         clearTimeout(toastTimer)
         clearTimeout(nudgeTimer)
+        clearTimeout(saveTimer)
+        window.removeEventListener("pagehide", onPageHide)
         canvasRO?.disconnect()
         root.innerHTML = ""
     }
