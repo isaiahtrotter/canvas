@@ -31,6 +31,7 @@ export const MARKUP = `
       <div class="settings-dialog" role="dialog" aria-modal="true" aria-label="Settings">
         <nav class="settings-nav">
           <div class="settings-title">Settings</div>
+          <div class="navind" id="navInd"></div>
           <button class="snav active" data-sec="account" type="button">Account</button>
           <button class="snav" data-sec="appearance" type="button">Appearance</button>
           <button class="snav" data-sec="canvas" type="button">Canvas</button>
@@ -57,13 +58,14 @@ export const MARKUP = `
             <div class="srow">
               <div class="slabel"><b>Theme</b><span>System follows your OS setting.</span></div>
               <div class="seg" id="prefTheme" role="radiogroup" aria-label="Theme">
+                <div class="segind" id="segInd"></div>
                 <button type="button" data-theme="light">Light</button>
                 <button type="button" data-theme="dark">Dark</button>
                 <button type="button" data-theme="system">System</button>
               </div>
             </div>
             <div class="srow">
-              <div class="slabel"><b>Frame timestamps</b><span>Show when each frame was last edited. Shift+T toggles it too.</span></div>
+              <div class="slabel"><b>Frame timestamps</b><span>Show when each frame was last edited. Shift+T to toggle.</span></div>
               <label class="switch"><input type="checkbox" id="prefTimes"><span></span></label>
             </div>
           </section>

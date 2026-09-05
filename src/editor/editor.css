@@ -419,15 +419,23 @@
   font-family:'Inter',system-ui,sans-serif;color:var(--text);
 }
 .settings-nav{
+  position:relative;
   width:180px;flex-shrink:0;background:var(--surface-2);padding:18px 10px;display:flex;flex-direction:column;gap:2px;
 }
-.settings-title{font-size:13px;font-weight:600;color:var(--text);padding:0 10px 12px;}
-.snav{
-  height:30px;padding:0 10px;border:none;border-radius:8px;background:transparent;text-align:left;
-  font-family:inherit;font-size:12.5px;color:var(--text-2);cursor:pointer;transition:background .12s, color .12s;
+.settings-title{position:relative;z-index:1;font-size:13px;font-weight:600;color:var(--text);padding:0 10px 12px;}
+/* the highlight slides between sections instead of popping on each one —
+   sized/positioned in JS from the active button's own box (updateNavIndicator) */
+.navind{
+  position:absolute;left:10px;right:10px;border-radius:8px;background:var(--surface);
+  transition:top .18s cubic-bezier(.3,.9,.4,1), height .18s ease;z-index:0;
 }
-.snav:hover{background:var(--surface-3);color:var(--text);}
-.snav.active{background:var(--surface);color:var(--text);font-weight:500;box-shadow:0 1px 2px var(--shadow);}
+.snav{
+  position:relative;z-index:1;
+  height:30px;padding:0 10px;border:none;border-radius:8px;background:transparent;text-align:left;
+  font-family:inherit;font-size:12.5px;color:var(--text-2);cursor:pointer;transition:color .12s;
+}
+.snav:hover{color:var(--text);}
+.snav.active{color:var(--text);font-weight:500;}
 .settings-body{flex:1;min-width:0;position:relative;padding:22px 26px;overflow-y:auto;}
 .settings-close{
   position:absolute;top:12px;right:12px;width:28px;height:28px;border:none;border-radius:8px;background:transparent;
@@ -452,13 +460,19 @@
   font-family:inherit;font-size:12px;cursor:pointer;
 }
 .sbtn:hover{background:var(--surface-3);}
-/* segmented control */
-.seg{display:flex;gap:2px;padding:2px;background:var(--surface-2);border-radius:9px;}
-.seg button{
-  height:26px;padding:0 12px;border:none;border-radius:7px;background:transparent;
-  font-family:inherit;font-size:12px;color:var(--text-2);cursor:pointer;transition:background .12s, color .12s;
+/* segmented control: the highlight slides between options instead of
+   popping on each one — sized/positioned in JS (updateThemeIndicator) */
+.seg{position:relative;display:flex;gap:2px;padding:2px;background:var(--surface-2);border-radius:9px;}
+.segind{
+  position:absolute;top:2px;bottom:2px;border-radius:7px;background:var(--surface);
+  transition:left .18s cubic-bezier(.3,.9,.4,1), width .18s ease;z-index:0;
 }
-.seg button.active{background:var(--surface);color:var(--text);font-weight:500;box-shadow:0 1px 2px var(--shadow);}
+.seg button{
+  position:relative;z-index:1;
+  height:26px;padding:0 12px;border:none;border-radius:7px;background:transparent;
+  font-family:inherit;font-size:12px;color:var(--text-2);cursor:pointer;transition:color .12s;
+}
+.seg button.active{color:var(--text);font-weight:500;}
 /* toggle switch */
 .switch{position:relative;width:34px;height:20px;flex-shrink:0;cursor:pointer;}
 .switch input{position:absolute;opacity:0;width:0;height:0;}

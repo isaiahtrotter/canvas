@@ -3294,11 +3294,29 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
     /* Theme drives the UI tokens on :root only. The canvas (background,
        frame labels, selection blue) is left alone — those already adapt to
        the canvas background color, whatever the theme. */
+    const segInd = root.querySelector<HTMLElement>("#segInd")
+    function updateThemeIndicator() {
+        const active = root.querySelector<HTMLElement>("#prefTheme button.active")
+        if (!segInd || !active) return
+        // the Appearance section is hidden until first visited, so its first
+        // real measurement can land well after mount — skip the slide just
+        // this once so it doesn't visibly grow in from a stale zero width
+        const firstReal = !segInd.dataset.placed && active.offsetWidth > 0
+        if (firstReal) segInd.style.transition = "none"
+        segInd.style.left = active.offsetLeft + "px"
+        segInd.style.width = active.offsetWidth + "px"
+        if (firstReal) {
+            segInd.dataset.placed = "1"
+            void segInd.offsetWidth // flush the position before transitions resume
+            segInd.style.transition = ""
+        }
+    }
     function applyTheme() {
         document.documentElement.classList.toggle("dark", isDark())
         root.querySelectorAll<HTMLElement>("#prefTheme button").forEach((b) =>
             b.classList.toggle("active", b.dataset.theme === prefs.theme)
         )
+        updateThemeIndicator()
     }
     const onSystemTheme = () => {
         if (prefs.theme === "system") applyTheme()
@@ -3332,10 +3350,21 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
     const settingsEl = root.querySelector<HTMLElement>("#settings")
     let settingsOpen = false
     let settingsSec = "account"
+    const navInd = root.querySelector<HTMLElement>("#navInd")
+    function updateNavIndicator() {
+        const active = root.querySelector<HTMLElement>(".snav.active")
+        if (!navInd || !active) return
+        navInd.style.top = active.offsetTop + "px"
+        navInd.style.height = active.offsetHeight + "px"
+    }
     function showSettingsSection(sec: string) {
         settingsSec = sec
         root.querySelectorAll<HTMLElement>(".snav").forEach((b) => b.classList.toggle("active", b.dataset.sec === sec))
         root.querySelectorAll<HTMLElement>(".ssec").forEach((s) => s.classList.toggle("active", s.dataset.sec === sec))
+        // both indicators: whichever section is visible now measures correctly;
+        // the other settles into place next time it's shown
+        updateNavIndicator()
+        updateThemeIndicator()
     }
     function openSettings() {
         if (!settingsEl || settingsOpen) return
