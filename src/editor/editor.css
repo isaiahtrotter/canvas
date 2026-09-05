@@ -1,5 +1,9 @@
 :root{
   --accent:#0c8ce9;
+  /* the selection box, its handles, and the size tooltip always use this —
+     unlike --accent (set per-canvas in applyBg() for contrast), it never
+     changes with the canvas background or the light/dark theme */
+  --sel-blue:#0c8ce9;
   /* UI theme tokens. Light by default; :root.dark swaps them. Canvas
      content (frames, text, selection handles) keeps literal colors. */
   --surface:#ffffff;      /* panels, pills, dialogs */
@@ -79,7 +83,11 @@
 .frame.dragging{z-index:5;}
 .titem.dragging{z-index:6;}
 .flabel{
-  position:absolute;left:0;bottom:100%;margin-bottom:6px;
+  position:absolute;left:0;bottom:100%;
+  /* margin-bottom is in #world's (zoomed) local units, so scale it by --inv
+     (1/zoom) to keep a constant 6 screen px gap above the frame at any zoom —
+     otherwise the gap grows with zoom and the label drifts away from it */
+  margin-bottom:calc(6px * var(--inv));
   display:flex;align-items:baseline;gap:7px;white-space:nowrap;
   font-size:11px;line-height:1;
   transform:scale(var(--inv));transform-origin:left bottom;
@@ -145,10 +153,10 @@
 
 /* Figma-style selection overlay */
 .selbox{
-  position:absolute;border:1px solid var(--accent);pointer-events:none;z-index:8;
+  position:absolute;border:1px solid var(--sel-blue);pointer-events:none;z-index:8;
 }
 .selhandle{
-  position:absolute;width:7px;height:7px;background:#fff;border:1.5px solid var(--accent);
+  position:absolute;width:7px;height:7px;background:#fff;border:1.5px solid var(--sel-blue);
   border-radius:1px;
 }
 .selhandle.tl{left:-4px;top:-4px;} .selhandle.tr{right:-4px;top:-4px;}
@@ -165,7 +173,7 @@
 .seledge.l{left:-4px;} .seledge.r{right:-4px;}
 .selsize{
   position:absolute;top:calc(100% + 6px);left:50%;transform:translateX(-50%);
-  background:var(--accent);color:#fff;font-size:10.5px;font-weight:500;
+  background:var(--sel-blue);color:#fff;font-size:10.5px;font-weight:500;
   padding:2px 7px;border-radius:4px;white-space:nowrap;font-variant-numeric:tabular-nums;
   user-select:none;
 }
