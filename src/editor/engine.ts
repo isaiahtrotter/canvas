@@ -1231,17 +1231,25 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
             marquee.style.width = w + "px"
             marquee.style.height = h + "px"
             marqueeRect = { x, y, w, h }
-            // live highlight: any text the rectangle currently touches gets the blue underline
+            // live highlight: text the rectangle touches gets the blue underline;
+            // a frame it fully covers gets a selection box right away, so you
+            // can see the moment it's captured rather than only on release
             const touched = hits(marqueeRect)
+            world.querySelectorAll<HTMLElement>(".selbox.live").forEach((n) => n.remove())
             items.forEach((it) => {
-                const node = canvas.querySelector<HTMLElement>(
-                    '[data-id="' + it.id + '"]'
-                )
-                if (node)
-                    node.classList.toggle(
-                        isFrame(it) ? "hover" : "sel-underline",
-                        touched.has(it.id)
-                    )
+                if (isFrame(it)) {
+                    if (!touched.has(it.id)) return
+                    const b = document.createElement("div")
+                    b.className = "selbox live"
+                    b.style.left = it.x + "px"
+                    b.style.top = it.y + "px"
+                    b.style.width = it.w + "px"
+                    b.style.height = it.h + "px"
+                    world.appendChild(b)
+                    return
+                }
+                const node = canvas.querySelector<HTMLElement>('[data-id="' + it.id + '"]')
+                if (node) node.classList.toggle("sel-underline", touched.has(it.id))
             })
         }
         function up() {
