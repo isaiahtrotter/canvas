@@ -553,10 +553,12 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
         container.appendChild(label)
     }
     // Guides run from the middle of the selection's facing side straight to
-    // the hovered target — purely a function of the two boxes' positions, so
-    // they hold still as the mouse moves around inside the hovered target
-    // instead of tracking the cursor.
-    function measureTo(container: HTMLElement, sel, target) {
+    // the hovered target's edge. They're anchored on the selection's center
+    // lines, so they never slide with the cursor; when the target surrounds
+    // the selection (its frame), the cursor only picks WHICH edges — the
+    // vertical and horizontal ones nearest to it — so the guides jump when
+    // the mouse crosses the frame's midlines and otherwise hold still.
+    function measureTo(container: HTMLElement, sel, target, mouse: { x: number; y: number }) {
         const selCx = sel.x + sel.w / 2,
             selCy = sel.y + sel.h / 2
         const overlapX = Math.max(sel.x, target.x) < Math.min(sel.x + sel.w, target.x + target.w)
@@ -577,24 +579,26 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
         }
         if (overlapX && overlapY) {
             // the target surrounds (or straddles) the selection, e.g. hovering
-            // its containing frame: measure to whichever pair of its edges —
-            // one vertical, one horizontal — sit nearest the selection's center
-            const edgeV = selCx - target.x <= target.x + target.w - selCx ? "l" : "r"
+            // its containing frame: from the selection's edge out to whichever
+            // frame edge is nearest the cursor, one per axis
+            const edgeV = mouse.x - target.x <= target.x + target.w - mouse.x ? "l" : "r"
             const tx = edgeV === "l" ? target.x : target.x + target.w
-            addMeasureLine(container, tx, selCy, selCx, selCy, selCx - tx)
-            const edgeH = selCy - target.y <= target.y + target.h - selCy ? "t" : "b"
+            const sx = edgeV === "l" ? sel.x : sel.x + sel.w
+            addMeasureLine(container, tx, selCy, sx, selCy, sx - tx)
+            const edgeH = mouse.y - target.y <= target.y + target.h - mouse.y ? "t" : "b"
             const ty = edgeH === "t" ? target.y : target.y + target.h
-            addMeasureLine(container, selCx, ty, selCx, selCy, selCy - ty)
+            const sy = edgeH === "t" ? sel.y : sel.y + sel.h
+            addMeasureLine(container, selCx, ty, selCx, sy, sy - ty)
         }
     }
-    function updateMeasure(hovered: Item | null | undefined) {
+    function updateMeasure(hovered: Item | null | undefined, mouse: { x: number; y: number }) {
         clearMeasure()
         if (!altDown || !hovered || selection.has(hovered.id)) return
         const sel = selectionBounds()
         if (!sel) return
         measureBox = document.createElement("div")
         measureBox.className = "measure"
-        measureTo(measureBox, sel, itemBounds(hovered))
+        measureTo(measureBox, sel, itemBounds(hovered), mouse)
         world.appendChild(measureBox)
     }
     canvas.addEventListener("pointermove", (e: PointerEvent) => {
@@ -606,7 +610,7 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
         }
         const t = (e.target as HTMLElement).closest<HTMLElement>(".titem, .frame")
         const hovered = t ? items.find((it) => it.id === Number(t.dataset.id)) : null
-        updateMeasure(hovered)
+        updateMeasure(hovered, toWorld(e.clientX, e.clientY))
     })
     canvas.addEventListener("pointerleave", () => clearMeasure())
 

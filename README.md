@@ -59,9 +59,9 @@ reference/               Original Framer components this was ported from
 **Measuring**
 - Hold Option (Alt on Windows) and hover another layer to see the pixel gap to the current
   selection: a guide runs from the middle of the selection's facing side straight to the hovered
-  target, anchored to their geometry rather than the cursor, so it holds still as you move within
-  it. Hovering a frame that contains (or straddles) the selection instead draws two guides — to
-  whichever of its edges sit nearest the selection's center
+  target's edge. Hovering the frame that contains the selection draws two guides, from the
+  selection's edges out to whichever frame edges sit nearest the cursor — so they re-target as you
+  move toward a different edge, but never slide with the cursor
 
 **Text**
 - Click / shift-click / marquee-drag to select text layers; drag to move. A marquee only picks up a
