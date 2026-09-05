@@ -1015,33 +1015,82 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
         const el = document.createElement("div")
         el.className = "frame"
         el.dataset.id = String(id)
+        // the name/timestamp label lives in the screen-space overlay (see
+        // renderFrameLabels), not in here. A frame is grabbed by that label;
+        // an empty frame also from anywhere inside it. A frame holding text
+        // keeps its body as empty canvas so a marquee can start there.
+        el.addEventListener("pointerdown", (e) => {
+            if (e.target !== el) return
+            if (items.some((t) => isText(t) && t.parent === id)) return
+            const it = itemById(id)
+            if (it) onItemPointerDown(e, it, el)
+        })
+        return el
+    }
+    /* Frame labels (name + timestamp) are drawn in #overlay at exact screen
+       coordinates, like the selection box — not inside the zoomed #world
+       with a counter-scale. Nesting scale(1/z) inside scale(z) made Chromium
+       rasterize the text a few pixels off its layout position, drifting with
+       zoom (measured: −4px at 1160%, then +8px from 1400% on, so the label
+       sat on the frame's edge). In screen space there is no transform to get
+       wrong. Reconciled in place by frame id so a label being renamed, and
+       any color transition, survives a re-render. */
+    const labelLayer = document.createElement("div")
+    labelLayer.className = "labels"
+    overlay.appendChild(labelLayer)
+    const LABEL_GAP = 6 // screen px between the label's bottom and the frame's top
+    function placeLabel(el: HTMLElement, x: number, y: number, w: number) {
+        const p = toScreen(x, y)
+        el.style.left = Math.round(p.x) + "px"
+        el.style.top = Math.round(p.y) - LABEL_GAP + "px"
+        el.style.maxWidth = Math.max(0, Math.round(w * view.z)) + "px" // never wider than the frame
+    }
+    function createLabel(id: number) {
         const label = document.createElement("div")
         label.className = "flabel"
+        label.dataset.id = String(id)
         const name = document.createElement("span")
         name.className = "fname"
         const time = document.createElement("span")
         time.className = "ftime"
         label.append(name, time)
-        el.appendChild(label)
-        // a frame is grabbed by its title; an empty frame also from anywhere
-        // inside it. A frame holding text keeps its body as empty canvas so a
-        // marquee can start there.
         label.addEventListener("pointerdown", (e) => {
             const it = itemById(id)
-            if (it) onItemPointerDown(e, it, el)
-        })
-        el.addEventListener("pointerdown", (e) => {
-            if (e.target !== el) return // the label has its own handler
-            if (items.some((t) => isText(t) && t.parent === id)) return
-            const it = itemById(id)
-            if (it) onItemPointerDown(e, it, el)
+            const node = canvas.querySelector<HTMLElement>('[data-id="' + id + '"]')
+            if (it && node) onItemPointerDown(e, it, node)
         })
         name.addEventListener("dblclick", (e) => {
             e.stopPropagation()
             const it = itemById(id)
             if (it && isFrame(it)) startRenaming(name, it)
         })
-        return el
+        return label
+    }
+    function renderFrameLabels() {
+        const frames = items.filter(isFrame)
+        const live = new Set(frames.map((f) => f.id))
+        Array.from(labelLayer.children).forEach((n) => {
+            const idAttr = (n as HTMLElement).dataset.id
+            if (idAttr !== undefined && !live.has(Number(idAttr))) n.remove()
+        })
+        frames.forEach((f) => {
+            let el = labelLayer.querySelector<HTMLElement>('[data-id="' + f.id + '"]')
+            if (!el) {
+                el = createLabel(f.id)
+                labelLayer.appendChild(el)
+            }
+            el.classList.toggle("selected", selection.has(f.id))
+            const name = el.querySelector<HTMLElement>(".fname")
+            const time = el.querySelector<HTMLElement>(".ftime")
+            if (name && name.getAttribute("contenteditable") !== "true" && name.textContent !== f.name)
+                name.textContent = f.name
+            if (time && time.dataset.t !== String(f.updatedAt)) {
+                time.dataset.t = String(f.updatedAt)
+                time.textContent = relTime(f.updatedAt)
+                time.title = absTime(f.updatedAt)
+            }
+            placeLabel(el, f.x, f.y, f.w)
+        })
     }
     // write a style only when it differs — an identical write is harmless
     // to layout but would still be noise, and this keeps intent clear
@@ -1069,15 +1118,6 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
         setStyle(el, "width", it.w + "px")
         setStyle(el, "height", it.h + "px")
         setStyle(el, "background", rgbaCss(it.fill, it.alpha))
-        const name = el.querySelector<HTMLElement>(".fname")
-        const time = el.querySelector<HTMLElement>(".ftime")
-        if (name && name.getAttribute("contenteditable") !== "true" && name.textContent !== it.name)
-            name.textContent = it.name
-        if (time && time.dataset.t !== String(it.updatedAt)) {
-            time.dataset.t = String(it.updatedAt)
-            time.textContent = relTime(it.updatedAt)
-            time.title = absTime(it.updatedAt)
-        }
     }
     function renderCanvas() {
         const multi = selection.size > 1
@@ -1364,6 +1404,7 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
     }
     function renderSelectionOverlay() {
         canvas.querySelectorAll<HTMLElement>(".selbox").forEach((n) => n.remove())
+        renderFrameLabels()
         renderUnderlines()
         if (editingEl) {
             // while typing: the same 1px box, sized to the live text, no handles
@@ -1680,6 +1721,7 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
         let draft: HTMLDivElement | null = null
         let draftBox: HTMLDivElement | null = null
         let draftSize: HTMLDivElement | null = null
+        let draftLabel: HTMLDivElement | null = null
         let r: { x: number; y: number; w: number; h: number } | null = null
         function mv(ev: PointerEvent) {
             const p = toWorld(ev.clientX, ev.clientY)
@@ -1689,17 +1731,17 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
             ) {
                 draft = document.createElement("div")
                 draft.className = "frame-draft"
-                const label = document.createElement("div")
-                label.className = "flabel"
+                world.appendChild(draft)
+                draftLabel = document.createElement("div")
+                draftLabel.className = "flabel"
                 const name = document.createElement("span")
                 name.className = "fname"
                 name.textContent = "Frame " + (frameCount + 1) // the name it will get
                 const time = document.createElement("span")
                 time.className = "ftime"
                 time.textContent = relTime(Date.now())
-                label.append(name, time)
-                draft.appendChild(label)
-                world.appendChild(draft)
+                draftLabel.append(name, time)
+                labelLayer.appendChild(draftLabel)
                 draftBox = document.createElement("div")
                 draftBox.className = "selbox live"
                 draftSize = document.createElement("div")
@@ -1723,12 +1765,14 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
                 placeScreenRect(draftBox, r)
                 if (draftSize) draftSize.textContent = Math.round(r.w) + " × " + Math.round(r.h)
             }
+            if (draftLabel) placeLabel(draftLabel, r.x, r.y, r.w)
         }
         function up() {
             document.removeEventListener("pointermove", mv)
             document.removeEventListener("pointerup", up)
             if (draft) draft.remove()
             if (draftBox) draftBox.remove()
+            if (draftLabel) draftLabel.remove()
             const box =
                 r && r.w >= 8 && r.h >= 8 ? r : { x: s.x, y: s.y, w: 200, h: 150 }
             pushHistory()

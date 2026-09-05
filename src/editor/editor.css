@@ -80,20 +80,16 @@
 .titem{z-index:1;}
 .frame.dragging{z-index:5;}
 .titem.dragging{z-index:6;}
+/* Frame labels live in the screen-space overlay (.labels), placed by
+   renderFrameLabels() at exact pixel positions — no transforms, so the text
+   can't drift off the frame as the zoom changes. left/top/max-width are set
+   inline; translateY(-100%) hangs the label above its anchor. The name
+   truncates with … first (it shrinks far more readily), then the time. */
+.labels{position:absolute;inset:0;pointer-events:none;z-index:2;}
 .flabel{
-  position:absolute;left:0;bottom:100%;
-  /* margin-bottom is in #world's (zoomed) local units, so scale it by --inv
-     (1/zoom) to keep a constant 6 screen px gap above the frame at any zoom —
-     otherwise the gap grows with zoom and the label drifts away from it */
-  margin-bottom:calc(6px * var(--inv));
-  /* the label is counter-scaled by --inv, so its screen width is its layout
-     width while the frame's screen width is 100% ÷ --inv. Cap it there so a
-     zoomed-out frame never has a label wider than itself — the name
-     truncates with … first (it shrinks far more readily), then the time. */
-  max-width:calc(100% / var(--inv));
+  position:absolute;transform:translateY(-100%);pointer-events:auto;
   display:flex;align-items:baseline;gap:7px;white-space:nowrap;
   font-size:11px;line-height:1;
-  transform:scale(var(--inv));transform-origin:left bottom;
 }
 /* label colors come from #canvas (--fname/--ftime), picked in applyBg() to
    keep contrast against the current background color */
@@ -101,7 +97,7 @@
   color:var(--fname,var(--text-2));font-weight:500;cursor:pointer;border-radius:2px;padding:1px 2px;margin:-1px -2px;
   flex:0 1000 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;
 }
-.flabel:hover .fname, .frame.selected .fname{color:var(--accent);}
+.flabel:hover .fname, .flabel.selected .fname{color:var(--accent);}
 .fname[contenteditable="true"]{
   cursor:text;user-select:text;outline:none;color:#1c1c1c;
   box-shadow:0 0 0 1.5px var(--accent);background:#fff;
