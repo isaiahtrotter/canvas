@@ -2543,7 +2543,7 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
        better than a dark one. (A softer third tier for very light
        backgrounds was tried and dropped — the timestamp washed out.) */
     const LABEL_PALETTES = {
-        dark: { name: "#1c1c1c", time: "#707070", grid: "rgba(0,0,0,.11)" },
+        dark: { name: "#1c1c1c", time: "#b2b2b2", grid: "rgba(0,0,0,.11)" },
         pale: { name: "#f4f4f4", time: "#a8a8a8", grid: "rgba(255,255,255,.13)" },
     }
     /* One light/dark call for the whole canvas, decided from the background's
@@ -2551,8 +2551,12 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
        so a light pastel background still reads as "light"). Both the label
        palette and the frame-name accent switch together on it. */
     function canvasIsDark(seen: [number, number, number]) {
-        const timeContrast = (p: { time: string }) => contrastRatio(hexToRgb(p.time), seen)
-        return timeContrast(LABEL_PALETTES.pale) > timeContrast(LABEL_PALETTES.dark)
+        // decided from the frame *name* colors, not the timestamp — the name
+        // stays a near-black/near-white pair regardless of how light or dark
+        // the timestamp itself is tuned to be, so this switch point doesn't
+        // move whenever the timestamp color is adjusted
+        const nameContrast = (p: { name: string }) => contrastRatio(hexToRgb(p.name), seen)
+        return nameContrast(LABEL_PALETTES.pale) > nameContrast(LABEL_PALETTES.dark)
     }
     /* The frame name (selected/hovered) normally matches the fixed selection
        blue (--sel-blue) — only on a genuinely dark canvas does it switch to a
