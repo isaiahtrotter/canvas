@@ -84,7 +84,7 @@ function ValueMorph({
       style={{ display: "inline-block", whiteSpace: "pre" }}
     >
       {prefix && (
-        <span style={{ color: "#9a9a9a", marginRight: 4 }}>{prefix}</span>
+        <span style={{ color: "var(--text-3)", marginRight: 4 }}>{prefix}</span>
       )}
       {text}
     </span>
@@ -145,7 +145,7 @@ const SLIDER_THUMB_CSS = `
     transition: background-color 150ms ease;
   }
   .cp-btn:hover {
-    background-color: #e8e8e5 !important;
+    background-color: var(--surface-3) !important;
   }
   .cp-square .cp-tint {
     opacity: 0;
@@ -597,8 +597,8 @@ export default function ColorPicker({
     <div
       style={{
         borderRadius: 14,
-        border: "1px solid #dedede",
-        background: "#fff",
+        border: "1px solid var(--line)",
+        background: "var(--surface)",
         boxShadow: "0 12px 28px rgba(0,0,0,.14)",
         width: SIZE + PAD * 2,
         padding: PAD,
@@ -623,7 +623,7 @@ export default function ColorPicker({
             width: 36,
             height: 36,
             borderRadius: 8,
-            border: "1px solid #dedede",
+            border: "1px solid var(--line)",
             flexShrink: 0,
             overflow: "hidden",
             boxSizing: "border-box",
@@ -645,7 +645,7 @@ export default function ColorPicker({
             alignItems: "center",
             gap: 4,
             borderRadius: 8,
-            border: "1px solid #dedede",
+            border: "1px solid var(--line)",
             padding: "0 4px 0 8px",
             height: 36,
             minWidth: 0,
@@ -655,7 +655,7 @@ export default function ColorPicker({
           {editingText ? (
             <>
               {inputMode === "hex" && (
-                <span style={{ color: "#9a9a9a", fontSize: 14 }}>#</span>
+                <span style={{ color: "var(--text-3)", fontSize: 14 }}>#</span>
               )}
               <input
                 type="text"
@@ -686,7 +686,7 @@ export default function ColorPicker({
                   background: "transparent",
                   fontSize: 14,
                   fontWeight: 500,
-                  color: "#1c1c1c",
+                  color: "var(--text)",
                   fontFamily: "inherit",
                   padding: 0,
                 }}
@@ -700,7 +700,7 @@ export default function ColorPicker({
                 minWidth: 0,
                 fontSize: 14,
                 fontWeight: 500,
-                color: "#1c1c1c",
+                color: "var(--text)",
                 cursor: "text",
                 overflow: "hidden",
                 whiteSpace: "nowrap",
@@ -728,8 +728,8 @@ export default function ColorPicker({
               fontSize: 10,
               fontWeight: 600,
               letterSpacing: 0.5,
-              color: "#6e6e6e",
-              background: "#f2f2f0",
+              color: "var(--text-2)",
+              background: "var(--surface-2)",
               border: "none",
               borderRadius: 5,
               padding: "4px 6px",
@@ -758,9 +758,9 @@ export default function ColorPicker({
             alignItems: "center",
             justifyContent: "center",
             borderRadius: 8,
-            border: "1px solid #dedede",
-            color: "#1c1c1c",
-            background: "#fff",
+            border: "1px solid var(--line)",
+            color: "var(--text)",
+            background: "var(--surface)",
             cursor: eyedropperSupported ? "pointer" : "default",
             opacity: eyedropperSupported ? 1 : 0.4,
             flexShrink: 0,
@@ -1011,8 +1011,8 @@ export default function ColorPicker({
                 width: 16,
                 height: 16,
                 borderRadius: "50%",
-                background: "#fff",
-                color: "#1c1c1c",
+                background: "var(--surface)",
+                color: "var(--text)",
                 border: "none",
                 boxShadow: "0 1px 3px rgba(0,0,0,0.25)",
                 display: "flex",
@@ -1041,9 +1041,9 @@ export default function ColorPicker({
               flex: 1,
               fontSize: 11,
               fontWeight: 500,
-              color: "#1c1c1c",
-              background: "#fff",
-              border: "1px solid #dedede",
+              color: "var(--text)",
+              background: "var(--surface)",
+              border: "1px solid var(--line)",
               borderRadius: 6,
               padding: "5px 0",
               cursor: "pointer",

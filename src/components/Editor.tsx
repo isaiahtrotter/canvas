@@ -5,7 +5,6 @@ import "../editor/editor.css"
 
 interface EditorProps {
     cornerRadius?: number
-    borderColor?: string
 }
 
 interface PickerState extends Fill {
@@ -24,10 +23,7 @@ interface PickerState extends Fill {
  * is owned by the engine (via the Fill row, once nothing is selected) — not
  * a prop here.
  */
-export function Editor({
-    cornerRadius = 10,
-    borderColor = "#dedede",
-}: EditorProps) {
+export function Editor({ cornerRadius = 0 }: EditorProps) {
     const ref = useRef<HTMLDivElement>(null)
     const wrapRef = useRef<HTMLDivElement>(null)
     const pickerRef = useRef<HTMLDivElement>(null)
@@ -66,11 +62,8 @@ export function Editor({
         const root = ref.current
         if (!root) return
         const appEl = root.querySelector<HTMLElement>(".app")
-        if (appEl) {
-            appEl.style.borderRadius = cornerRadius + "px"
-            appEl.style.borderColor = borderColor
-        }
-    }, [cornerRadius, borderColor])
+        if (appEl) appEl.style.borderRadius = cornerRadius + "px"
+    }, [cornerRadius])
 
     // Close on outside click / Escape; mirror open state onto the swatch row.
     useEffect(() => {

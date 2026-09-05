@@ -4,6 +4,9 @@ html, body, #root {
 }
 body {
   background: #ffffff;
+}
+:root.dark body {
+  background: #2c2c2c;
   font-family: 'Inter', system-ui, sans-serif;
   -webkit-font-smoothing: antialiased;
 }

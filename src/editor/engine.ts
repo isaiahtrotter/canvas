@@ -208,6 +208,7 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
         restore(redoStack.pop())
     }
     onDoc("keydown", (e) => {
+        if (settingsOpen) return
         if ((e.metaKey || e.ctrlKey) && (e.key === "z" || e.key === "Z")) {
             const a = document.activeElement as HTMLElement | null
             if (a && a.isContentEditable) return // let native undo run inside text editing
@@ -376,7 +377,7 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
     const grid = root.querySelector<HTMLElement>("#grid")
     function applyGrid() {
         if (!grid) return
-        const on = view.z >= GRID_FROM
+        const on = prefs.grid && view.z >= GRID_FROM
         grid.classList.toggle("on", on)
         if (!on) return
         // one cell per world unit, anchored to the world origin so lines sit
@@ -774,16 +775,22 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
     }
     function applyShowTimes() {
         app.classList.toggle("hide-times", !showTimes)
+        const sw = root.querySelector<HTMLInputElement>("#prefTimes")
+        if (sw) sw.checked = showTimes
     }
-    function toggleTimes() {
-        showTimes = !showTimes
+    function setShowTimes(v: boolean, toast = true) {
+        if (v === showTimes) return
+        showTimes = v
         try {
             localStorage.setItem(TIMES_KEY, showTimes ? "1" : "0")
         } catch (_) {
             /* ignore */
         }
         applyShowTimes()
-        showToast(showTimes ? "Timestamps shown" : "Timestamps hidden")
+        if (toast) showToast(showTimes ? "Timestamps shown" : "Timestamps hidden")
+    }
+    function toggleTimes() {
+        setShowTimes(!showTimes)
     }
     applyShowTimes()
     function refreshTimes() {
@@ -1604,6 +1611,18 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
 
     /* keyboard: tools, zoom, timestamps, delete */
     onDoc("keydown", (e) => {
+        if (settingsOpen) {
+            if (e.key === "Escape") {
+                e.preventDefault()
+                closeSettings()
+            }
+            return
+        }
+        if ((e.metaKey || e.ctrlKey) && e.key === ",") {
+            e.preventDefault()
+            openSettings()
+            return
+        }
         const a = document.activeElement as HTMLElement | null
         // an active text edit counts as typing even if focus is elsewhere
         const typing =
@@ -1839,7 +1858,7 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
                 h.style.left = vToPx(i.value) + "px"
                 const inner = h.querySelector<HTMLElement>(".hshape")
                 inner.style.background =
-                    merged && list.length > 1 ? "#111" : i.color
+                    merged && list.length > 1 ? "var(--text)" : i.color
                 inner.style.opacity = "1"
                 if (numEls[i.id]) numEls[i.id].textContent = i.value
             })
@@ -2087,7 +2106,7 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
             b.tabIndex = -1
             b.title = "Align " + d.kind
             b.innerHTML =
-                '<svg width="14" height="14" viewBox="0 0 14 14" fill="#1c1c1c">' +
+                '<svg width="14" height="14" viewBox="0 0 14 14" fill="currentColor">' +
                 d.icon +
                 "</svg>"
             b.addEventListener("click", () => alignSelection(d.kind))
@@ -2140,7 +2159,10 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
     const fillSwatch = fillRow.querySelector<HTMLElement>(".swatch")
     const fillHex = fillRow.querySelector<HTMLElement>(".hex")
     const fillPct = fillRow.querySelector<HTMLElement>(".pct")
-    let bg = { hex: "#ededed", alpha: 100 }
+    const CANVAS_DEFAULT = { light: "#ededed", dark: "#1e1e1e" }
+    let bg = { hex: CANVAS_DEFAULT.light, alpha: 100 }
+    // what actually shows behind a translucent canvas: the app surface
+    const surfaceRgb = (): [number, number, number] => (isDark() ? [0x2c, 0x2c, 0x2c] : [255, 255, 255])
     /* Frame labels (name + timestamp) sit directly on the canvas background,
        so fixed grays stop reading as the background approaches them. Two
        palettes, one switch: dark grays on light and mid-tone backgrounds,
@@ -2164,7 +2186,7 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
         return contrast(ACCENTS.dark) >= contrast(ACCENTS.pale) ? ACCENTS.dark : ACCENTS.pale
     }
     function labelPalette() {
-        const seen = compositeOver(hexToRgb(bg.hex), bg.alpha, [255, 255, 255]) // canvas sits on the white app
+        const seen = compositeOver(hexToRgb(bg.hex), bg.alpha, surfaceRgb())
         const timeContrast = (p: { time: string }) => contrastRatio(hexToRgb(p.time), seen)
         return timeContrast(LABEL_PALETTES.dark) >= timeContrast(LABEL_PALETTES.pale)
             ? LABEL_PALETTES.dark
@@ -2176,7 +2198,7 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
         canvas.style.setProperty("--fname", p.name)
         canvas.style.setProperty("--ftime", p.time)
         canvas.style.setProperty("--grid", p.grid)
-        const seen = compositeOver(hexToRgb(bg.hex), bg.alpha, [255, 255, 255])
+        const seen = compositeOver(hexToRgb(bg.hex), bg.alpha, surfaceRgb())
         canvas.style.setProperty("--accent", accentColor(seen))
     }
     // shared fill of the selection, or null when empty / mixed
@@ -2881,6 +2903,141 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
         }
     }
 
+    /* ================= preferences, theme, settings ================= */
+    type Theme = "light" | "dark" | "system"
+    const PREFS_KEY = "canvas.prefs.v1"
+    const prefs: { theme: Theme; name: string; grid: boolean } = { theme: "system", name: "", grid: true }
+    try {
+        const raw = localStorage.getItem(PREFS_KEY)
+        if (raw) {
+            const p = JSON.parse(raw)
+            if (p.theme === "light" || p.theme === "dark" || p.theme === "system") prefs.theme = p.theme
+            if (typeof p.name === "string") prefs.name = p.name.slice(0, 40)
+            if (typeof p.grid === "boolean") prefs.grid = p.grid
+        }
+    } catch (_) {
+        /* defaults */
+    }
+    function savePrefs() {
+        try {
+            localStorage.setItem(PREFS_KEY, JSON.stringify(prefs))
+        } catch (_) {
+            /* ignore */
+        }
+    }
+    const systemDark = typeof matchMedia === "function" ? matchMedia("(prefers-color-scheme: dark)") : null
+    function isDark() {
+        return prefs.theme === "dark" || (prefs.theme === "system" && !!systemDark?.matches)
+    }
+    /* Theme drives the UI tokens on :root and the canvas: a canvas still on
+       the other theme's default background moves to this one's, so dark mode
+       is dark all the way through — a custom background is left alone. */
+    function applyTheme() {
+        const dark = isDark()
+        document.documentElement.classList.toggle("dark", dark)
+        const other = dark ? CANVAS_DEFAULT.light : CANVAS_DEFAULT.dark
+        const mine = dark ? CANVAS_DEFAULT.dark : CANVAS_DEFAULT.light
+        if (bg.hex === other && bg.alpha === 100) bg = { hex: mine, alpha: 100 }
+        applyBg()
+        updateFill()
+        scheduleSave()
+        root.querySelectorAll<HTMLElement>("#prefTheme button").forEach((b) =>
+            b.classList.toggle("active", b.dataset.theme === prefs.theme)
+        )
+    }
+    const onSystemTheme = () => {
+        if (prefs.theme === "system") applyTheme()
+    }
+    systemDark?.addEventListener("change", onSystemTheme)
+    function setTheme(t: Theme) {
+        if (t === prefs.theme) return
+        prefs.theme = t
+        savePrefs()
+        applyTheme()
+    }
+
+    // profile picture: initials of the display name, or a silhouette
+    const userIcon = (px: number) =>
+        `<svg width="${px}" height="${px}" viewBox="0 0 16 16" fill="currentColor"><circle cx="8" cy="5.2" r="3"/><path d="M2.5 14a5.5 5.5 0 0 1 11 0z"/></svg>`
+    function initials(name: string) {
+        const parts = name.trim().split(/\s+/).filter(Boolean)
+        if (!parts.length) return ""
+        const a = parts[0][0] ?? ""
+        const b = parts.length > 1 ? parts[parts.length - 1][0] ?? "" : ""
+        return (a + b).toUpperCase()
+    }
+    function renderAvatar() {
+        const ini = initials(prefs.name)
+        root.querySelectorAll<HTMLElement>(".avatar").forEach((el) => {
+            if (ini) el.textContent = ini
+            else el.innerHTML = userIcon(el.classList.contains("lg") ? 28 : 16)
+        })
+    }
+
+    const settingsEl = root.querySelector<HTMLElement>("#settings")
+    let settingsOpen = false
+    let settingsSec = "account"
+    function showSettingsSection(sec: string) {
+        settingsSec = sec
+        root.querySelectorAll<HTMLElement>(".snav").forEach((b) => b.classList.toggle("active", b.dataset.sec === sec))
+        root.querySelectorAll<HTMLElement>(".ssec").forEach((s) => s.classList.toggle("active", s.dataset.sec === sec))
+    }
+    function openSettings() {
+        if (!settingsEl || settingsOpen) return
+        settingsOpen = true
+        settingsEl.classList.add("open")
+        showSettingsSection(settingsSec)
+        ;(root.querySelector<HTMLElement>(".snav.active") ?? settingsEl).focus?.()
+    }
+    function closeSettings() {
+        if (!settingsEl || !settingsOpen) return
+        settingsOpen = false
+        settingsEl.classList.remove("open")
+        root.querySelector<HTMLElement>("#avatarBtn")?.focus()
+    }
+    root.querySelector<HTMLElement>("#avatarBtn")?.addEventListener("click", openSettings)
+    root.querySelector<HTMLElement>("#settingsClose")?.addEventListener("click", closeSettings)
+    settingsEl?.addEventListener("pointerdown", (e) => {
+        if (e.target === settingsEl) closeSettings() // the backdrop
+    })
+    root.querySelectorAll<HTMLElement>(".snav").forEach((b) =>
+        b.addEventListener("click", () => showSettingsSection(b.dataset.sec))
+    )
+    const nameInput = root.querySelector<HTMLInputElement>("#prefName")
+    if (nameInput) {
+        nameInput.value = prefs.name
+        nameInput.addEventListener("input", () => {
+            prefs.name = nameInput.value.slice(0, 40)
+            savePrefs()
+            renderAvatar()
+        })
+        nameInput.addEventListener("keydown", (e) => {
+            if (e.key === "Enter") nameInput.blur()
+        })
+    }
+    root.querySelectorAll<HTMLElement>("#prefTheme button").forEach((b) =>
+        b.addEventListener("click", () => setTheme(b.dataset.theme as Theme))
+    )
+    root.querySelector<HTMLInputElement>("#prefTimes")?.addEventListener("change", (e) =>
+        setShowTimes((e.target as HTMLInputElement).checked, false)
+    )
+    const gridSwitch = root.querySelector<HTMLInputElement>("#prefGrid")
+    if (gridSwitch) {
+        gridSwitch.checked = prefs.grid
+        gridSwitch.addEventListener("change", () => {
+            prefs.grid = gridSwitch.checked
+            savePrefs()
+            applyGrid()
+        })
+    }
+    root.querySelector<HTMLElement>("#prefResetBg")?.addEventListener("click", () => {
+        bg = { hex: isDark() ? CANVAS_DEFAULT.dark : CANVAS_DEFAULT.light, alpha: 100 }
+        applyBg()
+        updateFill()
+        scheduleSave()
+    })
+    root.querySelector<HTMLElement>("#prefResetView")?.addEventListener("click", resetView)
+
     /* ================= wire up ================= */
     subscribe(renderCanvas)
 
@@ -2912,7 +3069,8 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
         seedDemoFrame()
     }
     applyView()
-    applyBg()
+    applyTheme() // also runs applyBg()
+    renderAvatar()
     restoring = true
     touchParentFrames() // prime lastText without bumping anything
     restoring = false
@@ -2932,6 +3090,8 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
         clearTimeout(saveTimer)
         window.removeEventListener("pagehide", onPageHide)
         canvasRO?.disconnect()
+        systemDark?.removeEventListener("change", onSystemTheme)
+        document.documentElement.classList.remove("dark")
         root.innerHTML = ""
     }
 

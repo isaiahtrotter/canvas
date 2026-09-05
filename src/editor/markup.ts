@@ -1,8 +1,14 @@
 export const MARKUP = `
 <div class="app">
-    <div class="layerspanel" aria-label="Layers">
-      <div class="sp-label">Layers</div>
-      <div class="layerlist" id="layerList"></div>
+    <div class="layerspanel layers-parked">
+      <div class="lp-head">
+        <button class="avatar" id="avatarBtn" type="button" aria-label="Open settings" title="Settings"></button>
+        <button class="sharebtn" id="shareBtn" type="button" disabled title="Sharing is coming soon">Share</button>
+      </div>
+      <div class="layers-sec">
+        <div class="sp-label">Layers</div>
+        <div class="layerlist" id="layerList"></div>
+      </div>
     </div>
     <div class="canvas-wrap">
       <div class="canvas" id="canvas"><div class="world" id="world"></div><div class="overlay" id="overlay"><div class="grid" id="grid"></div></div></div>
@@ -21,6 +27,81 @@ export const MARKUP = `
         <button data-z="+" title="Zoom in (⌘+)" aria-label="Zoom in" tabindex="-1">+</button>
       </div>
       <div class="toast" id="toast" role="status"></div>
+    </div>
+    <div class="settings" id="settings">
+      <div class="settings-dialog" role="dialog" aria-modal="true" aria-label="Settings">
+        <nav class="settings-nav">
+          <div class="settings-title">Settings</div>
+          <button class="snav active" data-sec="account" type="button">Account</button>
+          <button class="snav" data-sec="appearance" type="button">Appearance</button>
+          <button class="snav" data-sec="canvas" type="button">Canvas</button>
+          <button class="snav" data-sec="shortcuts" type="button">Shortcuts</button>
+        </nav>
+        <div class="settings-body">
+          <button class="settings-close" id="settingsClose" type="button" aria-label="Close settings">&times;</button>
+          <section class="ssec active" data-sec="account">
+            <h2>Account</h2>
+            <div class="srow">
+              <div class="avatar lg" id="avatarLg" aria-hidden="true"></div>
+            </div>
+            <div class="srow">
+              <div class="slabel"><b>Display name</b><span>Shown on your profile picture as initials.</span></div>
+              <input class="sinput" id="prefName" type="text" placeholder="Your name" maxlength="40" autocomplete="off">
+            </div>
+            <div class="srow">
+              <div class="slabel"><b>Email</b><span>Sign-in isn't set up yet.</span></div>
+              <input class="sinput" type="text" value="Not signed in" disabled>
+            </div>
+          </section>
+          <section class="ssec" data-sec="appearance">
+            <h2>Appearance</h2>
+            <div class="srow">
+              <div class="slabel"><b>Theme</b><span>System follows your OS setting.</span></div>
+              <div class="seg" id="prefTheme" role="radiogroup" aria-label="Theme">
+                <button type="button" data-theme="light">Light</button>
+                <button type="button" data-theme="dark">Dark</button>
+                <button type="button" data-theme="system">System</button>
+              </div>
+            </div>
+            <div class="srow">
+              <div class="slabel"><b>Frame timestamps</b><span>Show when each frame was last edited. Shift+T toggles it too.</span></div>
+              <label class="switch"><input type="checkbox" id="prefTimes"><span></span></label>
+            </div>
+          </section>
+          <section class="ssec" data-sec="canvas">
+            <h2>Canvas</h2>
+            <div class="srow">
+              <div class="slabel"><b>Pixel grid</b><span>Draw a one-pixel grid from 1000% zoom.</span></div>
+              <label class="switch"><input type="checkbox" id="prefGrid"><span></span></label>
+            </div>
+            <div class="srow">
+              <div class="slabel"><b>Background</b><span>Return the canvas to the theme's default color.</span></div>
+              <button class="sbtn" id="prefResetBg" type="button">Reset background</button>
+            </div>
+            <div class="srow">
+              <div class="slabel"><b>View</b><span>Back to 100% at the origin.</span></div>
+              <button class="sbtn" id="prefResetView" type="button">Reset view</button>
+            </div>
+          </section>
+          <section class="ssec" data-sec="shortcuts">
+            <h2>Shortcuts</h2>
+            <div class="keys">
+              <div class="k">Move tool</div><div><kbd>V</kbd></div>
+              <div class="k">Frame tool</div><div><kbd>F</kbd></div>
+              <div class="k">Pan</div><div><kbd>Space</kbd> + drag</div>
+              <div class="k">Zoom</div><div><kbd>⌘</kbd><kbd>+</kbd> / <kbd>⌘</kbd><kbd>−</kbd> / <kbd>⌘</kbd><kbd>0</kbd></div>
+              <div class="k">Select all / inside frame</div><div><kbd>⌘</kbd><kbd>A</kbd></div>
+              <div class="k">Nudge selection</div><div><kbd>↑↓←→</kbd>, <kbd>Shift</kbd> for 10px</div>
+              <div class="k">Duplicate while dragging</div><div><kbd>⌥</kbd> + drag</div>
+              <div class="k">Measure to another layer</div><div>hold <kbd>⌥</kbd></div>
+              <div class="k">Edit text / rename frame</div><div>double-click</div>
+              <div class="k">Undo / redo</div><div><kbd>⌘</kbd><kbd>Z</kbd> / <kbd>⇧</kbd><kbd>⌘</kbd><kbd>Z</kbd></div>
+              <div class="k">Toggle timestamps</div><div><kbd>⇧</kbd><kbd>T</kbd></div>
+              <div class="k">Settings</div><div><kbd>⌘</kbd><kbd>,</kbd></div>
+            </div>
+          </section>
+        </div>
+      </div>
     </div>
     <div class="sidepanel">
       <div class="sp-section">
