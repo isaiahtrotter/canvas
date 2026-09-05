@@ -229,20 +229,20 @@
   transition:left .18s cubic-bezier(.3,.9,.4,1), width .18s ease;z-index:0;
 }
 
-/* ---- left panel: profile + share on top, layers beneath ---- */
+/* ---- left panel: layers (parked for now, so the whole panel is hidden) ---- */
 .layerspanel{
   width:200px;flex-shrink:0;border-right:1px solid var(--line-soft);background:var(--surface);
-  padding:0 8px 16px;display:flex;flex-direction:column;gap:8px;
+  padding:12px 8px 16px;display:flex;flex-direction:column;gap:8px;
   overflow-y:auto;scrollbar-width:none;user-select:none;-webkit-user-select:none;
 }
 .layerspanel::-webkit-scrollbar{display:none;}
 .layerspanel .sp-label{padding:0 6px;}
-/* profile + share stay pinned at the very top of the panel, above whatever
-   scrolls beneath them */
+/* profile + share: pinned to the very top of the right sidebar, shown whether
+   or not anything is selected, above whatever scrolls beneath */
 .lp-head{
   position:sticky;top:0;z-index:2;flex-shrink:0;
   display:flex;align-items:center;justify-content:space-between;
-  padding:10px 2px 8px;margin:0 -8px;padding-left:10px;padding-right:10px;
+  padding:10px 10px 8px;margin:0 -8px;
   background:var(--surface);border-bottom:1px solid var(--line-soft);
 }
 .avatar{
@@ -261,8 +261,8 @@
   font-family:inherit;font-size:12px;font-weight:500;cursor:pointer;
 }
 .sharebtn:disabled{background:var(--surface-2);color:var(--text-4);cursor:default;}
-/* the layer list is parked for now */
-.layers-parked .layers-sec{display:none;}
+/* the layer list is parked for now — and with it, the left panel */
+.layerspanel.layers-parked{display:none;}
 
 /* ---- settings dialog ---- */
 .settings{
@@ -360,7 +360,7 @@
 /* ---- side panel ---- */
 .sidepanel{
   width:230px;flex-shrink:0;border-left:1px solid var(--line-soft);background:var(--surface);
-  padding:8px 8px 16px;display:flex;flex-direction:column;gap:14px;
+  padding:0 8px 16px;display:flex;flex-direction:column;gap:14px;
   overflow-y:auto;scrollbar-width:none;
   user-select:none;-webkit-user-select:none;
 }

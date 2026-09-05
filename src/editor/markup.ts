@@ -1,10 +1,6 @@
 export const MARKUP = `
 <div class="app">
     <div class="layerspanel layers-parked">
-      <div class="lp-head">
-        <button class="avatar" id="avatarBtn" type="button" aria-label="Open settings" title="Settings"></button>
-        <button class="sharebtn" id="shareBtn" type="button" disabled title="Sharing is coming soon">Share</button>
-      </div>
       <div class="layers-sec">
         <div class="sp-label">Layers</div>
         <div class="layerlist" id="layerList"></div>
@@ -104,6 +100,10 @@ export const MARKUP = `
       </div>
     </div>
     <div class="sidepanel">
+      <div class="lp-head">
+        <button class="avatar" id="avatarBtn" type="button" aria-label="Open settings" title="Settings"></button>
+        <button class="sharebtn" id="shareBtn" type="button" disabled title="Sharing is coming soon">Share</button>
+      </div>
       <div class="sp-section">
         <div class="alignrow" id="alignRow"></div>
       </div>
