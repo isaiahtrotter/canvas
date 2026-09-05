@@ -35,7 +35,7 @@ export const MARKUP = `
         </div>
       </div>
       <div class="sp-divider"></div>
-      <div class="sp-section">
+      <div class="sp-section sp-fill">
         <div class="sp-label" id="fillLabel">Fill</div>
         <button class="fillrow" id="fillRow" type="button" tabindex="-1" aria-label="Fill color"><span class="swatch"></span><span class="hex">1C1C1C</span><span class="pct">100%</span></button>
       </div>

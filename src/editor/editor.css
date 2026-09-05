@@ -29,9 +29,13 @@
 .frame{
   position:absolute;background:#fff;
 }
-/* the frame actively being dragged (a duplicate included) rises above
-   the rest so it never gets visually lost under a frame it passes over */
+/* Stacking while dragging: the moving frame (a duplicate included) rises
+   above other frames, and the text it carries rises above it — so its
+   contents don't vanish for the duration of the press. Text is given an
+   explicit layer so it stays above frames once any frame has a z-index. */
+.titem{z-index:1;}
 .frame.dragging{z-index:5;}
+.titem.dragging{z-index:6;}
 .flabel{
   position:absolute;left:0;bottom:100%;margin-bottom:6px;
   display:flex;align-items:baseline;gap:7px;white-space:nowrap;
@@ -182,6 +186,8 @@
   user-select:none;-webkit-user-select:none;
 }
 .sidepanel::-webkit-scrollbar{display:none;}
+/* nothing selected: only the Background section remains */
+.sidepanel.empty .sp-section:not(.sp-fill), .sidepanel.empty .sp-divider{display:none;}
 .sp-section{display:flex;flex-direction:column;gap:8px;padding:0 4px;}
 .sp-divider{height:1px;background:#f0f0ee;margin:0 -8px;}
 .sp-label{font-size:11px;font-weight:600;color:#9a9a9a;text-transform:uppercase;letter-spacing:.05em;}

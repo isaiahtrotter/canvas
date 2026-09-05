@@ -309,6 +309,16 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
     /* ---- minimap: fades in above the zoom pill once nothing is on screen.
        Frames are dots, the viewport is a rectangle; click to jump there. ---- */
     const minimap = root.querySelector<HTMLElement>("#minimap")
+    // the viewport rectangle is sized from canvas.clientWidth/Height, so a
+    // browser resize has to redraw it too
+    const canvasRO =
+        typeof ResizeObserver !== "undefined"
+            ? new ResizeObserver(() => {
+                  updateMinimap()
+                  renderSelectionOverlay()
+              })
+            : null
+    canvasRO?.observe(canvas)
     const MM_W = 140,
         MM_H = 90,
         MM_PAD = 4
@@ -1025,8 +1035,6 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
             emit()
         }
 
-        const liveEl =
-            canvas.querySelector<HTMLElement>('[data-id="' + it.id + '"]') || el
 
         const startX = e.clientX,
             startY = e.clientY
@@ -1049,7 +1057,15 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
         const preDrag = snapshot() // pre-state: pushed once if the gesture actually moves anything
         let moved = false
         let duplicated = false
-        liveEl.classList.add("dragging")
+        // .dragging lifts the moving frame above other frames and its carried
+        // text above the frame (see CSS). emit() re-renders the DOM, so this
+        // is re-applied after the mid-drag duplicate, not just at the start.
+        const markDragging = (on: boolean) =>
+            starts.forEach((s) => {
+                const node = canvas.querySelector<HTMLElement>('[data-id="' + s.it.id + '"]')
+                if (node) node.classList.toggle("dragging", on)
+            })
+        markDragging(true)
         function mv(ev: PointerEvent) {
             const dx = (ev.clientX - startX) / view.z,
                 dy = (ev.clientY - startY) / view.z
@@ -1063,6 +1079,7 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
                 duplicated = true
                 starts.forEach((s) => duplicateItem(s.it, s.x, s.y))
                 emit()
+                markDragging(true) // the re-render dropped the class
             }
             starts.forEach((s) => {
                 s.it.x = s.x + dx
@@ -1081,7 +1098,7 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
             updateProps() // X/Y readouts follow the drag in real time
         }
         function up() {
-            liveEl.classList.remove("dragging")
+            markDragging(false)
             document.removeEventListener("pointermove", mv)
             document.removeEventListener("pointerup", up)
             if (moved) {
@@ -1759,6 +1776,7 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
        selected the same row controls the canvas background instead. The
        host renders the picker either way (setFill routes to whichever
        applies at call time). ---- */
+    const sidepanel = root.querySelector<HTMLElement>(".sidepanel")
     const fillRow = root.querySelector<HTMLElement>("#fillRow")
     const fillLabel = root.querySelector<HTMLElement>("#fillLabel")
     const fillSwatch = fillRow.querySelector<HTMLElement>(".swatch")
@@ -1781,7 +1799,9 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
     }
     function updateFill() {
         const mode = fillMode()
-        fillLabel.textContent = mode === "background" ? "Background color" : "Fill"
+        fillLabel.textContent = mode === "background" ? "Background" : "Fill"
+        // with nothing selected the sidebar collapses to just this section
+        sidepanel.classList.toggle("empty", mode === "background")
         fillRow.classList.toggle("disabled", false) // always actionable now — selection fill, or the background
         if (mode === "background") {
             fillRow.classList.remove("mixed")
@@ -2320,6 +2340,7 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
         window.removeEventListener("blur", onWindowBlur)
         clearInterval(timesTimer)
         clearTimeout(toastTimer)
+        canvasRO?.disconnect()
         root.innerHTML = ""
     }
 

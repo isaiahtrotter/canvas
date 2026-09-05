@@ -53,8 +53,8 @@ reference/               Original Framer components this was ported from
 - The Fill row in the sidebar shows the selection's color and alpha (or "Mixed"); click it
   to open the color picker (ported from `reference/color_picker.tsx`). Changes apply live to
   every selected layer — frame backgrounds and text color — and one picker session is one undo step
-- With nothing selected, the same row becomes **Background color** and controls the canvas
-  background instead (not part of item undo history)
+- With nothing selected, the sidebar collapses to a single **Background** section, and the same
+  row controls the canvas background instead (not part of item undo history)
 
 **Measuring**
 - Hold Option (Alt on Windows) and hover another layer to see the pixel gap to the current
