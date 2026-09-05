@@ -423,7 +423,17 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
         const ctx = grid.getContext("2d")
         if (!ctx) return
         ctx.clearRect(0, 0, pw, ph)
-        ctx.fillStyle = getComputedStyle(canvas).getPropertyValue("--grid").trim() || "rgba(0,0,0,.09)"
+        // A flat translucent line reads fine against a background it
+        // contrasts with, but fades out entirely against a background
+        // close to its own color — a light gray line simply vanishes on a
+        // light gray canvas. A soft dark halo behind a bright line (a
+        // canvas shadow, not a second shape) guarantees an edge against
+        // any background: light where the canvas is dark, and the dark
+        // rim carries it where the canvas is light too, so it never
+        // disappears while still reading as a light grid overall.
+        ctx.shadowColor = "rgba(0,0,0,.55)"
+        ctx.shadowBlur = 1.4 * dpr
+        ctx.fillStyle = "rgba(255,255,255,.85)"
         const z = view.z
         for (let k = Math.ceil(-view.x / z); k <= Math.floor((W - view.x) / z); k++)
             ctx.fillRect(Math.round((view.x + k * z) * dpr), 0, 1, ph)
@@ -2577,8 +2587,8 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
        better than a dark one. (A softer third tier for very light
        backgrounds was tried and dropped — the timestamp washed out.) */
     const LABEL_PALETTES = {
-        dark: { name: "#1c1c1c", time: "#707070", grid: "rgba(0,0,0,.11)" },
-        pale: { name: "#f4f4f4", time: "#a8a8a8", grid: "rgba(255,255,255,.13)" },
+        dark: { name: "#1c1c1c", time: "#707070" },
+        pale: { name: "#f4f4f4", time: "#a8a8a8" },
     }
     /* One light/dark call for the whole canvas, decided from the background's
        overall luminance (via two opposite grays' contrast — hue-independent,
@@ -2609,7 +2619,6 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
             canvas.style.backgroundColor = HEAT_BG
             canvas.style.setProperty("--fname", "#efe4ff")
             canvas.style.setProperty("--ftime", "#b9a6d9")
-            canvas.style.setProperty("--grid", "rgba(255,255,255,.08)")
             canvas.style.setProperty("--accent", accentColor(hexToRgb(HEAT_BG)))
             applyGrid()
             return
@@ -2619,7 +2628,6 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
         const p = labelPalette(seen)
         canvas.style.setProperty("--fname", p.name)
         canvas.style.setProperty("--ftime", p.time)
-        canvas.style.setProperty("--grid", p.grid)
         canvas.style.setProperty("--accent", accentColor(seen))
         applyGrid()
     }
