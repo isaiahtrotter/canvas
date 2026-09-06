@@ -1403,22 +1403,38 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
     }
     // clip every text layer to the frame it belongs to; text being edited is
     // left unclipped so the caret and what's typed stay visible
+    // an item's own rect intersected with every ancestor frame's, at any
+    // depth — a child frame poking past its parent clips exactly like text
+    // does, and anything inside that child frame is clipped by both levels
+    function visibleRect(it: Item, w: number, h: number) {
+        let r = { x: it.x, y: it.y, w, h }
+        for (let p = containingFrame(it); p; p = containingFrame(p)) {
+            const x1 = Math.max(r.x, p.x),
+                y1 = Math.max(r.y, p.y)
+            const x2 = Math.min(r.x + r.w, p.x + p.w),
+                y2 = Math.min(r.y + r.h, p.y + p.h)
+            r = { x: x1, y: y1, w: Math.max(0, x2 - x1), h: Math.max(0, y2 - y1) }
+        }
+        return r
+    }
     function applyClips() {
-        items.filter(isText).forEach((it) => {
+        items.forEach((it) => {
             const node = canvas.querySelector<HTMLElement>('[data-id="' + it.id + '"]')
             if (!node) return
-            const f = node === editingEl ? null : containingFrame(it)
-            if (!f) {
+            if (node === editingEl || !containingFrame(it)) {
                 node.style.clipPath = ""
                 return
             }
             const { w, h } = nodeSize(it)
-            const top = Math.max(0, f.y - it.y),
-                left = Math.max(0, f.x - it.x),
-                right = Math.max(0, it.x + w - (f.x + f.w)),
-                bottom = Math.max(0, it.y + h - (f.y + f.h))
+            const vis = visibleRect(it, w, h)
+            const top = vis.y - it.y,
+                left = vis.x - it.x,
+                right = it.x + w - (vis.x + vis.w),
+                bottom = it.y + h - (vis.y + vis.h)
             node.style.clipPath =
-                top || left || right || bottom ? `inset(${top}px ${right}px ${bottom}px ${left}px)` : ""
+                top > 0 || left > 0 || right > 0 || bottom > 0
+                    ? `inset(${Math.max(0, top)}px ${Math.max(0, right)}px ${Math.max(0, bottom)}px ${Math.max(0, left)}px)`
+                    : ""
         })
     }
 
