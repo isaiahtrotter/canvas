@@ -1260,12 +1260,59 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
         f.updatedAt = Date.now()
         emit()
     }
-    // Shift+A: add a smart layout to the selected frame, or remove the one it has
+    /* Selected text (one or more, no frames) gets wrapped in a new frame that
+       has a layout, like Figma's "add auto layout" on a selection. Direction
+       and gap are inferred from how the items already sit — spread more
+       sideways than downward reads as a row, and the average clear space
+       between neighbours becomes the gap — so the frame closes around them
+       without visibly rearranging anything. Returns false if the selection
+       isn't wrappable (empty, or includes a frame). */
+    function wrapSelectionInLayout(): boolean {
+        const sel = selectedItems()
+        const texts = sel.filter(isText)
+        if (!texts.length || texts.length !== sel.length) return false
+        const b = boundsOf(texts)
+        if (!b) return false
+        const sizes = new Map(texts.map((t) => [t.id, nodeSize(t)]))
+        const cx = texts.map((t) => t.x + sizes.get(t.id).w / 2)
+        const cy = texts.map((t) => t.y + sizes.get(t.id).h / 2)
+        const spread = (v: number[]) => Math.max(...v) - Math.min(...v)
+        const direction: FrameLayout["direction"] = spread(cx) > spread(cy) ? "horizontal" : "vertical"
+        const vertical = direction === "vertical"
+        const sorted = [...texts].sort((a, b2) => (vertical ? a.y - b2.y : a.x - b2.x))
+        const gaps: number[] = []
+        for (let i = 1; i < sorted.length; i++) {
+            const prev = sorted[i - 1],
+                next = sorted[i]
+            const prevEnd = vertical ? prev.y + sizes.get(prev.id).h : prev.x + sizes.get(prev.id).w
+            gaps.push((vertical ? next.y : next.x) - prevEnd)
+        }
+        const gap = gaps.length ? Math.max(0, Math.round(gaps.reduce((s, g) => s + g, 0) / gaps.length)) : DEFAULT_LAYOUT.gap
+        const padding = DEFAULT_LAYOUT.padding
+        pushHistory()
+        const f = addFrame({
+            x: Math.round(b.x - padding),
+            y: Math.round(b.y - padding),
+            w: Math.round(b.w + padding * 2),
+            h: Math.round(b.h + padding * 2),
+            layout: { ...DEFAULT_LAYOUT, direction, gap, padding },
+        })
+        texts.forEach((t) => (t.parent = f.id))
+        selection.clear()
+        selection.add(f.id)
+        emit()
+        return true
+    }
+    // Shift+A: add a smart layout to the selected frame (or remove the one it
+    // has); with text selected, wrap it in a new layout frame
     function toggleLayout() {
         const f = singleSelectedFrame()
-        if (!f) return
-        setLayout(f, f.layout ? null : { ...DEFAULT_LAYOUT })
-        showToast(f.layout ? "Smart layout added" : "Smart layout removed")
+        if (f) {
+            setLayout(f, f.layout ? null : { ...DEFAULT_LAYOUT })
+            showToast(f.layout ? "Smart layout added" : "Smart layout removed")
+            return
+        }
+        if (wrapSelectionInLayout()) showToast("Smart layout added")
     }
 
     /* Text belongs to the frame recorded in its `parent` (set by where the
@@ -3337,7 +3384,11 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
         addBtn.innerHTML = ICON_V + "<span>Add smart layout</span>"
         addBtn.addEventListener("click", () => {
             const f = singleSelectedFrame()
-            if (f && !f.layout) setLayout(f, { ...DEFAULT_LAYOUT })
+            if (f) {
+                if (!f.layout) setLayout(f, { ...DEFAULT_LAYOUT })
+                return
+            }
+            wrapSelectionInLayout()
         })
         // --- controls
         const controls = document.createElement("div")
@@ -3382,12 +3433,25 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
         layoutGroup.append(addBtn, controls)
 
         return function updateLayoutPanel() {
+            const sel = selectedItems()
             const f = singleSelectedFrame()
-            const show = !!f
+            const show = sel.length > 0
             layoutSec?.classList.toggle("on", show)
             layoutDiv?.classList.toggle("on", show)
-            if (!f) return
+            if (!show) return
+            if (!f) {
+                // text selected: the button wraps it; a frame mixed in can't be
+                // wrapped (frames don't nest), so say so instead of doing nothing
+                const allText = sel.every(isText)
+                addBtn.style.display = ""
+                controls.style.display = "none"
+                addBtn.disabled = !allText
+                addBtn.innerHTML = ICON_V + `<span>${allText ? (sel.length > 1 ? "Wrap in smart layout" : "Add smart layout") : "Select text, or one frame"}</span>`
+                return
+            }
             const has = !!f.layout
+            addBtn.disabled = false
+            addBtn.innerHTML = ICON_V + "<span>Add smart layout</span>"
             addBtn.style.display = has ? "none" : ""
             controls.style.display = has ? "" : "none"
             if (!f.layout) return

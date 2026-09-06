@@ -499,6 +499,8 @@
   font-family:inherit;font-size:12px;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px;
 }
 .layoutbtn:hover{background:var(--input-bg-hover);}
+.layoutbtn:disabled{color:var(--text-4);cursor:default;}
+.layoutbtn:disabled:hover{background:var(--input-bg);}
 .layoutbtn.remove{color:var(--text-3);font-size:11.5px;height:28px;}
 .layoutbtn.remove:hover{color:var(--text);}
 

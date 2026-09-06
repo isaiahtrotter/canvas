@@ -99,7 +99,7 @@ export const MARKUP = `
               <div class="k">Undo / redo</div><div><kbd>⌘</kbd><kbd>Z</kbd> / <kbd>⇧</kbd><kbd>⌘</kbd><kbd>Z</kbd></div>
               <div class="k">Toggle timestamps</div><div><kbd>⇧</kbd><kbd>T</kbd></div>
               <div class="k">Heatmap of recent edits</div><div><kbd>⇧</kbd><kbd>H</kbd></div>
-              <div class="k">Add / remove smart layout (frame selected)</div><div><kbd>⇧</kbd><kbd>A</kbd></div>
+              <div class="k">Smart layout: add/remove on a frame, or wrap selected text</div><div><kbd>⇧</kbd><kbd>A</kbd></div>
               <div class="k">Settings</div><div><kbd>⌘</kbd><kbd>,</kbd></div>
               <div class="k">Hide / show sidebars</div><div><kbd>⌘</kbd><kbd>\\</kbd></div>
             </div>
