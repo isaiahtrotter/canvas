@@ -1093,8 +1093,11 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
             if (e.target !== el) return
             const it = itemById(id)
             if (!it || !isFrame(it)) return
-            const holdsText = items.some((t) => isText(t) && t.parent === id)
-            if (holdsText && !containingFrame(it)) return
+            // "contents" means anything parented to it — text or a nested
+            // frame — not just text; a top-level frame holding only a child
+            // frame must be just as ungrabbable from its body
+            const hasContents = items.some((c) => c.id !== id && c.parent === id)
+            if (hasContents && !containingFrame(it)) return
             onItemPointerDown(e, it, el)
         })
         el.addEventListener("dblclick", (e) => {
