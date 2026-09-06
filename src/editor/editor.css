@@ -265,6 +265,11 @@
 .selbox{
   position:absolute;border:1px solid var(--sel-blue);pointer-events:none;z-index:8;
 }
+/* hover outline for a child frame (nested inside another) — it has no
+   label of its own, so hovering its own body outlines the whole frame */
+.childframe-hover{
+  position:absolute;border:1px solid var(--sel-blue);pointer-events:none;z-index:8;
+}
 .selhandle{
   position:absolute;width:7px;height:7px;background:#fff;border:1.5px solid var(--sel-blue);
   border-radius:1px;

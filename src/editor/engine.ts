@@ -1057,14 +1057,19 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
         el.className = "frame"
         el.dataset.id = String(id)
         // the name/timestamp label lives in the screen-space overlay (see
-        // renderFrameLabels), not in here. A frame is grabbed by that label;
-        // an empty frame also from anywhere inside it. A frame holding text
-        // keeps its body as empty canvas so a marquee can start there.
+        // renderFrameLabels), not in here. A top-level frame is grabbed by
+        // that label; an empty one also from anywhere inside it, but one
+        // holding text keeps its body as empty canvas so a marquee can start
+        // there. A child frame (nested inside another) has no label to grab
+        // by at all — it shows none — so its body always selects it,
+        // whether or not it holds text.
         el.addEventListener("pointerdown", (e) => {
             if (e.target !== el) return
-            if (items.some((t) => isText(t) && t.parent === id)) return
             const it = itemById(id)
-            if (it) onItemPointerDown(e, it, el)
+            if (!it || !isFrame(it)) return
+            const holdsText = items.some((t) => isText(t) && t.parent === id)
+            if (holdsText && !containingFrame(it)) return
+            onItemPointerDown(e, it, el)
         })
         return el
     }
@@ -1109,12 +1114,16 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
     }
     function renderFrameLabels() {
         const frames = items.filter(isFrame)
-        const live = new Set(frames.map((f) => f.id))
+        // a frame nested inside another frame is that frame's child — it
+        // shows no name or timestamp of its own, same as it gets no
+        // selection handles of its own when it's the lone selection
+        const topLevel = new Set(frames.filter((f) => !containingFrame(f)).map((f) => f.id))
         Array.from(labelLayer.children).forEach((n) => {
             const idAttr = (n as HTMLElement).dataset.id
-            if (idAttr !== undefined && !live.has(Number(idAttr))) n.remove()
+            if (idAttr !== undefined && !topLevel.has(Number(idAttr))) n.remove()
         })
         frames.forEach((f) => {
+            if (!topLevel.has(f.id)) return
             let el = labelLayer.querySelector<HTMLElement>('[data-id="' + f.id + '"]')
             if (!el) {
                 el = createLabel(f.id)
@@ -1564,6 +1573,27 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
             u.style.width = Math.round(a.x + w * view.z) - Math.round(a.x) + "px"
             overlay.appendChild(u)
         })
+        // a child frame (nested inside another) shows no label of its own, so
+        // hovering its own body — not its children, which get their normal
+        // hover treatment above since they're whatever is actually under the
+        // pointer — outlines the whole thing instead. Skipped when it's
+        // already the sole selection, which draws this same box as .selbox.
+        overlay.querySelectorAll<HTMLElement>(".childframe-hover").forEach((n) => n.remove())
+        const hoveredFrame =
+            lastHover?.classList.contains("frame") && lastHover.isConnected
+                ? items.find((i) => i.id === Number(lastHover!.dataset.id))
+                : null
+        if (
+            hoveredFrame &&
+            isFrame(hoveredFrame) &&
+            containingFrame(hoveredFrame) &&
+            !(selection.size === 1 && selection.has(hoveredFrame.id))
+        ) {
+            const box = document.createElement("div")
+            box.className = "childframe-hover"
+            placeScreenRect(box, itemBounds(hoveredFrame))
+            overlay.appendChild(box)
+        }
     }
     /* ---- smart guides while dragging ---- */
     type Rect = { x: number; y: number; w: number; h: number }
