@@ -1225,6 +1225,19 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
         })
         applyClips()
     }
+    // Text is measured from the DOM, so a layout computed before a web font
+    // has finished loading used the fallback font's metrics — a hugging
+    // frame could sit narrower than the text that arrived a moment later.
+    // Re-run once the fonts are in (and whenever more load later).
+    const onFontsLoaded = () => {
+        relayoutLive()
+        renderSelectionOverlay()
+        scheduleSave()
+    }
+    if (typeof document !== "undefined" && document.fonts) {
+        document.fonts.ready.then(onFontsLoaded)
+        document.fonts.addEventListener("loadingdone", onFontsLoaded)
+    }
     /* ---- smart layout engine ----
        For every frame with a layout: its text children are ordered by where
        they currently sit along the main axis (so dragging one to a new spot
@@ -1249,8 +1262,12 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
             const mainTotal = sized.reduce((sum, s) => sum + mainOf(s), 0) + L.gap * Math.max(0, sized.length - 1)
             const crossMax = sized.reduce((m, s) => Math.max(m, crossOf(s)), 0)
             if (L.sizing === "hug") {
-                const w = Math.max(1, Math.round((vertical ? crossMax : mainTotal) + L.padding * 2))
-                const h = Math.max(1, Math.round((vertical ? mainTotal : crossMax) + L.padding * 2))
+                // ceil, not round: the frame must never come out smaller than
+                // what's inside it, or the content (and its hover box) pokes
+                // past the frame's edge by a fraction that zoom makes visible
+                const up = (v: number) => Math.ceil(v - 1e-6)
+                const w = Math.max(1, up((vertical ? crossMax : mainTotal) + L.padding * 2))
+                const h = Math.max(1, up((vertical ? mainTotal : crossMax) + L.padding * 2))
                 if (w !== f.w || h !== f.h) {
                     f.w = w
                     f.h = h
@@ -1262,8 +1279,11 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
             sized.forEach((s) => {
                 const cross = crossOf(s)
                 const off = L.align === "start" ? 0 : L.align === "center" ? (innerCross - cross) / 2 : innerCross - cross
-                const x = Math.round(vertical ? f.x + L.padding + off : f.x + cursor)
-                const y = Math.round(vertical ? f.y + cursor : f.y + L.padding + off)
+                // exact, not rounded: text heights are fractional (size × line
+                // height), so rounding each child's position onto the grid left
+                // up to half a unit between neighbours even at gap 0
+                const x = vertical ? f.x + L.padding + off : f.x + cursor
+                const y = vertical ? f.y + cursor : f.y + L.padding + off
                 if (x !== s.k.x || y !== s.k.y) {
                     s.k.x = x
                     s.k.y = y
@@ -1661,12 +1681,21 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
             // and a dotted box around each thing directly inside it, so you can
             // see what you'd be getting into before you double-click
             const f = hoverTarget
+            const fb = itemBounds(f)
             items
                 .filter((it) => (isText(it) ? it.parent === f.id : it.id !== f.id && containingFrame(it)?.id === f.id))
                 .forEach((it) => {
+                    // clipped to the frame, like the content itself is, so every
+                    // dotted box sits inside the frame's own outline
+                    const b = itemBounds(it)
+                    const x1 = Math.max(b.x, fb.x),
+                        y1 = Math.max(b.y, fb.y)
+                    const x2 = Math.min(b.x + b.w, fb.x + fb.w),
+                        y2 = Math.min(b.y + b.h, fb.y + fb.h)
+                    if (x2 <= x1 || y2 <= y1) return
                     const dot = document.createElement("div")
                     dot.className = "childitem-hover"
-                    placeScreenRect(dot, itemBounds(it))
+                    placeScreenRect(dot, { x: x1, y: y1, w: x2 - x1, h: y2 - y1 })
                     overlay.appendChild(dot)
                 })
         }
@@ -1768,6 +1797,9 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
         })
     }
 
+    // while a frame is being dragged inside another frame, its selection box is
+    // hidden so the drop reads cleanly; it comes back on release (see the drag)
+    let hideSelBoxWhileNesting = false
     function renderSelectionOverlay() {
         canvas.querySelectorAll<HTMLElement>(".selbox").forEach((n) => n.remove())
         renderFrameLabels()
@@ -1783,7 +1815,7 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
             return
         }
         const b = selectionBounds() // one combined box around everything selected
-        if (!b) return
+        if (!b || hideSelBoxWhileNesting) return
         const box = document.createElement("div")
         box.className = "selbox"
         placeScreenRect(box, b)
@@ -2159,11 +2191,15 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
                 }
             })
             applyClips()
+            // a dragged frame that's currently inside another frame loses its
+            // selection box for the duration — it's back the moment you release
+            hideSelBoxWhileNesting = starts.some((s) => isFrame(s.it) && containingFrame(s.it) !== null)
             renderSelectionOverlay()
             updateProps() // X/Y readouts follow the drag in real time
         }
         function up() {
             markDragging(false)
+            hideSelBoxWhileNesting = false
             renderSnapGuides([])
             document.removeEventListener("pointermove", mv)
             document.removeEventListener("pointerup", up)
@@ -4249,6 +4285,7 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
         clearTimeout(saveTimer)
         window.removeEventListener("pagehide", onPageHide)
         canvasRO?.disconnect()
+        document.fonts?.removeEventListener("loadingdone", onFontsLoaded)
         systemDark?.removeEventListener("change", onSystemTheme)
         document.documentElement.classList.remove("dark")
         root.innerHTML = ""
