@@ -62,6 +62,7 @@
 .canvas.pan-ready{cursor:grab;}
 .canvas.panning{cursor:grabbing;}
 .canvas.tool-frame, .canvas.tool-frame .titem, .canvas.tool-frame .frame{cursor:crosshair;}
+.canvas.tool-text, .canvas.tool-text .titem, .canvas.tool-text .frame{cursor:text;}
 /* everything on the canvas lives in #world, which carries the pan/zoom
    transform; --inv (1/zoom) lets chrome counter-scale to a constant screen size */
 .world{position:absolute;left:0;top:0;transform-origin:0 0;--inv:1;}

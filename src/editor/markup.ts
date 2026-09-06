@@ -16,6 +16,9 @@ export const MARKUP = `
         <button data-tool="frame" title="Frame (F)" aria-label="Frame tool" tabindex="-1">
           <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M4.5 1.5v11M9.5 1.5v11M1.5 4.5h11M1.5 9.5h11"/></svg>
         </button>
+        <button data-tool="text" title="Text (T)" aria-label="Text tool" tabindex="-1">
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M2.5 2.5h9M7 2.5v9"/></svg>
+        </button>
       </div>
       <div class="minimap" id="minimap" aria-hidden="true"></div>
       <div class="zoompill" aria-label="Zoom">
@@ -89,6 +92,7 @@ export const MARKUP = `
             <div class="keys">
               <div class="k">Move tool</div><div><kbd>V</kbd></div>
               <div class="k">Frame tool</div><div><kbd>F</kbd></div>
+              <div class="k">Text tool</div><div><kbd>T</kbd></div>
               <div class="k">Pan</div><div><kbd>Space</kbd> + drag</div>
               <div class="k">Zoom</div><div><kbd>⌘</kbd><kbd>+</kbd> / <kbd>⌘</kbd><kbd>−</kbd> / <kbd>⌘</kbd><kbd>0</kbd></div>
               <div class="k">Select all / inside frame</div><div><kbd>⌘</kbd><kbd>A</kbd></div>

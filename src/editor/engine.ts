@@ -867,11 +867,12 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
     })
 
     /* ---- tools: V = move/select, F = draw a frame ---- */
-    type Tool = "move" | "frame"
+    type Tool = "move" | "frame" | "text"
     let tool: Tool = "move"
     function setTool(t: Tool) {
         tool = t
         canvas.classList.toggle("tool-frame", t === "frame")
+        canvas.classList.toggle("tool-text", t === "text")
         root.querySelectorAll<HTMLElement>(".toolpill [data-tool]").forEach(
             (b) => b.classList.toggle("active", b.dataset.tool === t)
         )
@@ -2365,6 +2366,21 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
         document.addEventListener("pointerup", up)
     }
 
+    // text tool: a click drops a new text at that spot (inside whatever
+    // frame it lands in) and starts editing it right away, like double-click
+    function placeTextAt(e: PointerEvent) {
+        const p = toWorld(e.clientX, e.clientY)
+        const parent = frameAt(p)
+        pushHistory()
+        const it = addItem({ x: Math.round(p.x), y: Math.round(p.y), parent: parent ? parent.id : null })
+        selection.clear()
+        selection.add(it.id)
+        setTool("move")
+        emit()
+        const el = canvas.querySelector<HTMLElement>('[data-id="' + it.id + '"]')
+        if (el) startEditing(el, it)
+    }
+
     /* canvas: pan, frame tool, or marquee drag-select on empty space */
     canvas.addEventListener("pointerdown", (e: PointerEvent) => {
         if (spaceDown || e.button === 1) {
@@ -2375,6 +2391,15 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
         if (e.button !== 0) return
         if (tool === "frame") {
             startFrameDraw(e)
+            return
+        }
+        if (tool === "text") {
+            // focusing the new text node synchronously in this same handler —
+            // without this, the browser's own default mousedown-focus
+            // behavior can steal focus back once the event finishes, since
+            // the actual click target was empty canvas, not the new element
+            e.preventDefault()
+            placeTextAt(e)
             return
         }
         const t = e.target as HTMLElement
@@ -2552,6 +2577,10 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
         }
         if (e.key === "f" || e.key === "F") {
             setTool("frame")
+            return
+        }
+        if (e.key === "t" || e.key === "T") {
+            setTool("text")
             return
         }
         if (e.key.startsWith("Arrow") && selection.size) {
