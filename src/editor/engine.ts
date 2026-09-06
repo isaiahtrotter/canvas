@@ -51,6 +51,12 @@ export interface FrameItem {
     fill: string // hex
     alpha: number // 0–100
     layout?: FrameLayout | null
+    /** id of the frame this frame sits in, or null. Set the same way as a
+     *  text's: by where the pointer is when a drag ends, or by the frame drawn
+     *  around it — not by geometry, so a child frame can hang past its
+     *  parent's edge and still belong to it. `undefined` only in documents
+     *  saved before frames had this field. */
+    parent?: number | null
 }
 
 export interface Fill {
@@ -279,9 +285,20 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
     }
     // a freshly drawn frame takes in the loose text that sits fully inside it
     function adoptLooseText(f: FrameItem) {
-        items.filter(isText).forEach((t) => {
-            if (t.parent == null && rectContains(f, t)) t.parent = f.id
+        // top-level text and frames sitting fully inside the new frame join it
+        items.forEach((it) => {
+            if (it.id !== f.id && it.parent == null && rectContains(f, it)) it.parent = f.id
         })
+    }
+    // the smallest frame a box sits fully inside — for placing a newly drawn frame
+    function frameEnclosing(r: { x: number; y: number; w: number; h: number }, exclude?: number): FrameItem | null {
+        let best: FrameItem | null = null
+        items.filter(isFrame).forEach((f) => {
+            if (f.id === exclude) return
+            if (r.x >= f.x && r.y >= f.y && r.x + r.w <= f.x + f.w && r.y + r.h <= f.y + f.h && (!best || f.w * f.h < best.w * best.h))
+                best = f
+        })
+        return best
     }
 
     let frameCount = 0
@@ -301,6 +318,7 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
                 updatedAt: now,
                 fill: "#ffffff",
                 alpha: 100,
+                parent: null,
             },
             props
         )
@@ -357,6 +375,13 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
                     if (inside && (!best || f.w * f.h < best.w * best.h)) best = f
                 })
                 t.parent = best ? best.id : null
+            })
+            // frames from before explicit nesting: a frame belongs to the
+            // smallest frame it sits fully inside
+            items.filter(isFrame).forEach((g) => {
+                if (g.parent !== undefined) return
+                const p = frameEnclosing(g, g.id)
+                g.parent = p ? p.id : null
             })
             // text saved before it had its own edit time: inherit its frame's
             items.filter(isText).forEach((t) => {
@@ -1262,12 +1287,11 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
             const mainTotal = sized.reduce((sum, s) => sum + mainOf(s), 0) + L.gap * Math.max(0, sized.length - 1)
             const crossMax = sized.reduce((m, s) => Math.max(m, crossOf(s)), 0)
             if (L.sizing === "hug") {
-                // ceil, not round: the frame must never come out smaller than
-                // what's inside it, or the content (and its hover box) pokes
-                // past the frame's edge by a fraction that zoom makes visible
-                const up = (v: number) => Math.ceil(v - 1e-6)
-                const w = Math.max(1, up((vertical ? crossMax : mainTotal) + L.padding * 2))
-                const h = Math.max(1, up((vertical ? mainTotal : crossMax) + L.padding * 2))
+                // exact, not rounded: content sizes are fractional, and a hug
+                // that's off by any fraction leaves either the content poking
+                // out or a sliver of frame past the last item
+                const w = Math.max(1, (vertical ? crossMax : mainTotal) + L.padding * 2)
+                const h = Math.max(1, (vertical ? mainTotal : crossMax) + L.padding * 2)
                 if (w !== f.w || h !== f.h) {
                     f.w = w
                     f.h = h
@@ -1339,6 +1363,9 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
             h: Math.round(b.h + padding * 2),
             layout: { ...DEFAULT_LAYOUT, direction, gap, padding },
         })
+        // the new frame takes the texts' place in the tree, if they shared one
+        const parents = new Set(texts.map((t) => t.parent ?? null))
+        f.parent = parents.size === 1 ? [...parents][0] : null
         texts.forEach((t) => (t.parent = f.id))
         selection.clear()
         selection.add(f.id)
@@ -1362,9 +1389,7 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
        line that runs past the frame's edge still belongs to it and the part
        poking out is clipped. Frames nest only when fully contained. */
     function frameHolds(f: FrameItem, it: Item) {
-        if (f.id === it.id) return false
-        if (isFrame(it)) return rectContains(f, it)
-        return it.parent === f.id
+        return f.id !== it.id && it.parent === f.id
     }
     // smallest frame under a world point, skipping `exclude` (frames being dragged)
     function frameAt(p: { x: number; y: number }, exclude?: Set<number>): FrameItem | null {
@@ -1562,21 +1587,15 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
     }
     // the frame holding the item (see frameHolds), if any: a text's parent,
     // or the smallest frame fully containing a frame
+    // the frame holding the item — its recorded parent, text or frame alike
     function containingFrame(it: Item): FrameItem | null {
-        if (isText(it)) return frameById(it.parent)
-        let best: FrameItem | null = null
-        items.filter(isFrame).forEach((f) => {
-            if (!frameHolds(f, it)) return
-            if (!best || f.w * f.h < best.w * best.h) best = f
-        })
-        return best
+        return frameById(it.parent)
     }
     /* Everything inside a frame, at any depth: the text it holds directly, the
        frames fully inside it, and the text inside those. This is what moves
        with it, is deleted with it, and is selected by ⌘A inside it. */
     function isInside(it: Item, f: FrameItem): boolean {
         if (it.id === f.id) return false
-        if (isFrame(it)) return rectContains(f, it)
         for (let p = frameById(it.parent); p; p = containingFrame(p)) if (p.id === f.id) return true
         return false
     }
@@ -1725,9 +1744,7 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
         context: FrameItem | null
     ): { dx: number; dy: number; guides: SnapGuide[] } | null {
         const sibling = (it: Item) =>
-            context
-                ? it.id === context.id || (isText(it) && it.parent === context.id)
-                : isFrame(it) || (isText(it) && it.parent == null)
+            context ? it.id === context.id || it.parent === context.id : it.parent == null
         const targets = items.filter((it) => !moving.has(it.id) && sibling(it)).map((it) => itemBounds(it))
         if (!targets.length) return null
         const thr = SNAP_PX / view.z
@@ -2042,10 +2059,9 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
         // follows the pointer's membership: while the pointer is over a frame
         // the text belongs to it (and is clipped by it); the moment the pointer
         // leaves, the text leaves too.
-        const freeTexts = starts.filter(
-            (s): s is typeof s & { it: TextItem } =>
-                isText(s.it) && !(s.it.parent != null && draggedFrames.has(s.it.parent))
-        )
+        // whatever is moving on its own — not riding along inside a dragged
+        // frame — follows the pointer's membership, text and frames alike
+        const freeItems = starts.filter((s) => !(s.it.parent != null && draggedFrames.has(s.it.parent)))
         // the moving set's combined box at drag start; the live box is this
         // shifted by (dx, dy), so snapping never has to re-measure mid-drag
         const baseBounds = boundsOf(starts.map((s) => s.it))
@@ -2094,6 +2110,12 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
                         copies.set(s.it.id, c.id)
                         copyIds.push(c.id)
                     })
+                // a copied frame that sat in a copied frame points at the copy
+                copies.forEach((copyId, origId) => {
+                    const c = itemById(copyId)
+                    const o = itemById(origId)
+                    if (c && o && o.parent != null) c.parent = copies.get(o.parent) ?? o.parent
+                })
                 starts
                     .filter((s) => isText(s.it))
                     .forEach((s) => {
@@ -2159,9 +2181,7 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
             // frames are top-level, so a drag that includes one aligns at the
             // root; a text-only drag aligns within whichever frame the pointer
             // is over right now (membership follows the pointer the same way)
-            const snapContext = draggedFrames.size
-                ? null
-                : frameAt({ x: startWorld.x + dx, y: startWorld.y + dy }, draggedFrames)
+            const snapContext = frameAt({ x: startWorld.x + dx, y: startWorld.y + dy }, draggedFrames)
             const snapped =
                 moved && baseBounds ? snapToGuides(baseBounds, dx, dy, movingIds, shiftAxis, snapContext) : null
             if (snapped) {
@@ -2174,12 +2194,14 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
                 s.it.x = Math.round(s.x + dx)
                 s.it.y = Math.round(s.y + dy)
             })
-            if (moved && freeTexts.length) {
+            if (moved && freeItems.length) {
                 // use the same (possibly axis-locked) point the item is actually
                 // drawn at, not the raw cursor — otherwise membership could pick
-                // a frame the item doesn't visually appear to be over
+                // a frame the item doesn't visually appear to be over. While the
+                // pointer is inside the parent the child stays in it; once the
+                // pointer leaves, so does the child.
                 const under = frameAt({ x: startWorld.x + dx, y: startWorld.y + dy }, draggedFrames)
-                freeTexts.forEach((s) => (s.it.parent = under ? under.id : null))
+                freeItems.forEach((s) => (s.it.parent = under ? under.id : null))
             }
             items.forEach((i2) => {
                 const node = canvas.querySelector<HTMLElement>(
@@ -2299,6 +2321,8 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
                 w: Math.round(box.w),
                 h: Math.round(box.h),
             })
+            const enclosing = frameEnclosing(f, f.id)
+            f.parent = enclosing ? enclosing.id : null
             adoptLooseText(f)
             selection.clear()
             selection.add(f.id)
