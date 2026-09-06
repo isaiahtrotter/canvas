@@ -1424,7 +1424,20 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
         items.forEach((it) => {
             const node = canvas.querySelector<HTMLElement>('[data-id="' + it.id + '"]')
             if (!node) return
-            if (node === editingEl || !containingFrame(it)) {
+            // A node holding a clip-path — even one that's the empty string,
+            // just from having had one before — appears to get promoted to
+            // its own compositing layer in at least some browsers, and
+            // repositioning that layer via raw style.left/top on every
+            // pointermove (not a transform the compositor can interpolate)
+            // can make its paint region briefly lag behind the new position,
+            // clipping content right at the layer's edge for a frame or two —
+            // on text, that reads as the descenders flickering off. Standalone
+            // text never has a clip-path at all, so it never hits this; text
+            // in a frame does, which matches: it only happens there, and only
+            // while actually moving. Suspending the clip for the duration of
+            // the drag sidesteps it; applyClips() reinstates the real one the
+            // moment the drag ends and the layer settles.
+            if (node === editingEl || node.classList.contains("dragging") || !containingFrame(it)) {
                 node.style.clipPath = ""
                 return
             }
