@@ -225,6 +225,13 @@
   animation:heatglow-text 3.6s ease-in-out infinite;
   animation-delay:calc(var(--phase, 0) * -3.6s);
 }
+/* A blurred element whose left/top change on every pointermove (a drag) is a
+   known Chromium/WebKit compositing case: the filter's expanded paint region
+   can go stale relative to the new position, visibly clipping the edges of
+   the blur — on text that reads as descenders getting cut flat. Dropping the
+   blur for the duration of the drag sidesteps it; it's back the moment the
+   drag ends, when the element stops moving every frame. */
+.canvas.heat .titem.dragging{filter:none;}
 @keyframes heatglow{0%,100%{opacity:.3;}50%{opacity:.85;}}
 /* a thin dark edge keeps text readable on a frame of the same heat */
 @keyframes heatglow-text{
