@@ -1048,7 +1048,8 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
             // not a request to start over (which would re-select everything)
             if (el.getAttribute("contenteditable") === "true") return
             const it = itemById(id)
-            if (it && isText(it)) startEditing(el, it)
+            if (!it || !isText(it)) return
+            if (!drillInto(it)) startEditing(el, it) // one level deeper, or edit once there's nowhere deeper
         })
         return el
     }
@@ -1070,6 +1071,11 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
             const holdsText = items.some((t) => isText(t) && t.parent === id)
             if (holdsText && !containingFrame(it)) return
             onItemPointerDown(e, it, el)
+        })
+        el.addEventListener("dblclick", (e) => {
+            if (e.target !== el) return
+            const it = itemById(id)
+            if (it && drillInto(it)) e.stopPropagation()
         })
         return el
     }
@@ -1538,6 +1544,57 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
         })
         return best
     }
+    /* Everything inside a frame, at any depth: the text it holds directly, the
+       frames fully inside it, and the text inside those. This is what moves
+       with it, is deleted with it, and is selected by ⌘A inside it. */
+    function isInside(it: Item, f: FrameItem): boolean {
+        if (it.id === f.id) return false
+        if (isFrame(it)) return rectContains(f, it)
+        for (let p = frameById(it.parent); p; p = containingFrame(p)) if (p.id === f.id) return true
+        return false
+    }
+    function descendantsOf(f: FrameItem): Item[] {
+        return items.filter((it) => isInside(it, f))
+    }
+
+    /* ---- drilling into nested frames ----
+       Top-level frames are transparent: their contents are selectable
+       directly. A frame nested inside another is opaque until you double-
+       click into it — a single click anywhere on it or its contents selects
+       the nested frame as a whole, so nothing can be dragged out of it by
+       accident. Double-clicking enters it; then its direct children are
+       selectable, and any frame nested one level deeper is the new opaque
+       unit — double-click again to go further. Clicking empty canvas leaves;
+       Escape steps back out one level. */
+    let enteredFrame: number | null = null
+    // the highest frame in `it`'s ancestry that hasn't been entered, or `it` itself
+    function selectTargetFor(it: Item): Item {
+        let cur: Item = it
+        for (;;) {
+            const p = containingFrame(cur)
+            if (!p || p.id === enteredFrame || !containingFrame(p)) return cur
+            cur = p
+        }
+    }
+    function isAncestorFrame(ancestorId: number, it: Item): boolean {
+        for (let p = containingFrame(it); p; p = containingFrame(p)) if (p.id === ancestorId) return true
+        return false
+    }
+    // clicking outside the entered frame's subtree leaves it
+    function leaveUnlessInside(it: Item | null) {
+        if (enteredFrame !== null && (!it || (it.id !== enteredFrame && !isAncestorFrame(enteredFrame, it)))) enteredFrame = null
+    }
+    // double-click: go one level deeper toward `it` and select what's there
+    function drillInto(it: Item) {
+        const target = selectTargetFor(it)
+        if (!isFrame(target) || !containingFrame(target)) return false // nothing nested to enter
+        enteredFrame = target.id
+        const next = selectTargetFor(it)
+        selection.clear()
+        selection.add(next.id)
+        emit()
+        return true
+    }
     function singleSelectedFrame(): FrameItem | null {
         const sel = selectedItems()
         return sel.length === 1 && isFrame(sel[0]) ? sel[0] : null
@@ -1555,10 +1612,14 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
     // rendered box.
     function renderUnderlines() {
         overlay.querySelectorAll<HTMLElement>(".tunder").forEach((n) => n.remove())
+        // hover reflects what a click would select: a text inside a nested
+        // frame you haven't entered highlights that frame, not the text
+        const hoveredItem = lastHover && lastHover.isConnected ? itemById(Number(lastHover.dataset.id)) ?? null : null
+        const hoverTarget = hoveredItem ? selectTargetFor(hoveredItem) : null
         items.filter(isText).forEach((it) => {
             const node = canvas.querySelector<HTMLElement>('[data-id="' + it.id + '"]')
             if (!node || node === editingEl) return
-            if (!(node.classList.contains("sel-underline") || node === lastHover)) return
+            if (!(node.classList.contains("sel-underline") || hoverTarget === it)) return
             let { w, h } = nodeSize(it)
             if (!w) return
             const f = containingFrame(it)
@@ -1579,19 +1640,16 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
         // pointer — outlines the whole thing instead. Skipped when it's
         // already the sole selection, which draws this same box as .selbox.
         overlay.querySelectorAll<HTMLElement>(".childframe-hover").forEach((n) => n.remove())
-        const hoveredFrame =
-            lastHover?.classList.contains("frame") && lastHover.isConnected
-                ? items.find((i) => i.id === Number(lastHover!.dataset.id))
-                : null
         if (
-            hoveredFrame &&
-            isFrame(hoveredFrame) &&
-            containingFrame(hoveredFrame) &&
-            !(selection.size === 1 && selection.has(hoveredFrame.id))
+            hoverTarget &&
+            isFrame(hoverTarget) &&
+            containingFrame(hoverTarget) &&
+            hoverTarget.id !== enteredFrame &&
+            !(selection.size === 1 && selection.has(hoverTarget.id))
         ) {
             const box = document.createElement("div")
             box.className = "childframe-hover"
-            placeScreenRect(box, itemBounds(hoveredFrame))
+            placeScreenRect(box, itemBounds(hoverTarget))
             overlay.appendChild(box)
         }
     }
@@ -1884,6 +1942,13 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
         if (e.button !== 0) return
         if (el.getAttribute("contenteditable") === "true") return
         e.stopPropagation()
+        // inside a nested frame you haven't entered, the click lands on the frame
+        leaveUnlessInside(it)
+        const target = selectTargetFor(it)
+        if (target !== it) {
+            it = target
+            el = canvas.querySelector<HTMLElement>('[data-id="' + target.id + '"]') ?? el
+        }
 
         if (e.shiftKey) {
             if (selection.has(it.id)) selection.delete(it.id)
@@ -1907,18 +1972,19 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
             y: s.y,
             parent: isText(s) ? s.parent ?? null : null,
         }))
-        // a frame carries the text sitting inside it, selected or not
+        // a frame carries everything inside it — its text, the frames nested
+        // in it, and their text — selected or not
         const carried = new Set(starts.map((s) => s.it.id))
-        const draggedFrames = new Set(starts.filter((s) => isFrame(s.it)).map((s) => s.it.id))
         selectedItems()
             .filter(isFrame)
             .forEach((f) => {
-                items.filter(isText).forEach((t) => {
-                    if (carried.has(t.id) || !frameHolds(f, t)) return
-                    carried.add(t.id)
-                    starts.push({ it: t, x: t.x, y: t.y, parent: t.parent ?? null })
+                descendantsOf(f).forEach((d) => {
+                    if (carried.has(d.id)) return
+                    carried.add(d.id)
+                    starts.push({ it: d, x: d.x, y: d.y, parent: isText(d) ? d.parent ?? null : null })
                 })
             })
+        const draggedFrames = new Set(starts.filter((s) => isFrame(s.it)).map((s) => s.it.id))
         // Text moving on its own (not riding along inside a dragged frame)
         // follows the pointer's membership: while the pointer is over a frame
         // the text belongs to it (and is clipped by it); the moment the pointer
@@ -2204,6 +2270,7 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
         // the blur commits the edit — otherwise the regular selection box (with
         // handles) flashes for the span between mousedown and mouseup
         if (editingEl && selection.size) selection.clear()
+        enteredFrame = null // empty canvas: back to the top level
         const rect = canvas.getBoundingClientRect()
         const s = toWorld(e.clientX, e.clientY)
         let marquee: HTMLDivElement | null = null,
@@ -2384,7 +2451,16 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
         }
         if (e.key === "Escape") {
             if (tool !== "move") setTool("move")
-            else if (selection.size) {
+            else if (enteredFrame !== null) {
+                // step out: the frame you were in becomes the selection, and its
+                // own nested parent (if any) becomes the new context
+                const was = frameById(enteredFrame)
+                const up = was ? containingFrame(was) : null
+                enteredFrame = up && containingFrame(up) ? up.id : null
+                selection.clear()
+                if (was) selection.add(was.id)
+                emit()
+            } else if (selection.size) {
                 selection.clear()
                 emit()
             }
@@ -2394,13 +2470,11 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
         if (!selection.size) return
         e.preventDefault()
         pushHistory()
-        // a frame takes the text inside it along
+        // a frame takes everything inside it along, nested frames included
         const doomed = new Set(selection)
         items.filter(isFrame).forEach((f) => {
             if (!doomed.has(f.id)) return
-            items.filter(isText).forEach((t) => {
-                if (frameHolds(f, t)) doomed.add(t.id)
-            })
+            descendantsOf(f).forEach((d) => doomed.add(d.id))
         })
         // a deleted item's frame counts as edited too — unless the frame is
         // being deleted along with it
@@ -3104,11 +3178,7 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
     function selectAll() {
         const frames = selectedItems().filter(isFrame)
         const inside = new Set<number>()
-        frames.forEach((f) =>
-            items.forEach((it) => {
-                if (frameHolds(f, it)) inside.add(it.id)
-            })
-        )
+        frames.forEach((f) => descendantsOf(f).forEach((d) => inside.add(d.id)))
         selection.clear()
         if (inside.size) inside.forEach((id) => selection.add(id))
         else items.forEach((it) => selection.add(it.id))
@@ -3124,11 +3194,7 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
         selectedItems().forEach((it) => moving.set(it.id, it))
         selectedItems()
             .filter(isFrame)
-            .forEach((f) =>
-                items.filter(isText).forEach((t) => {
-                    if (frameHolds(f, t)) moving.set(t.id, t)
-                })
-            )
+            .forEach((f) => descendantsOf(f).forEach((d) => moving.set(d.id, d)))
         if (!moving.size) return
         if (!nudgePre) {
             nudgePre = snapshot()
