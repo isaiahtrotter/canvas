@@ -788,7 +788,7 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
         container.appendChild(line)
         const label = document.createElement("div")
         label.className = "measure-label"
-        label.textContent = Math.round(Math.abs(dist)) + "px"
+        label.textContent = String(Math.round(Math.abs(dist)))
         label.style.left = (a.x + b.x) / 2 + "px"
         label.style.top = (a.y + b.y) / 2 + "px"
         container.appendChild(label)
