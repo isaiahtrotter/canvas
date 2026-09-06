@@ -270,6 +270,10 @@
 .childframe-hover{
   position:absolute;border:1px solid var(--sel-blue);pointer-events:none;z-index:8;
 }
+/* each item inside a hovered child frame gets a dotted box */
+.childitem-hover{
+  position:absolute;border:1px dotted var(--sel-blue);pointer-events:none;z-index:8;
+}
 .selhandle{
   position:absolute;width:7px;height:7px;background:#fff;border:1.5px solid var(--sel-blue);
   border-radius:1px;
@@ -506,8 +510,10 @@
 .layoutbtn:hover{background:var(--input-bg-hover);}
 .layoutbtn:disabled{color:var(--text-4);cursor:default;}
 .layoutbtn:disabled:hover{background:var(--input-bg);}
-.layoutbtn.remove{color:var(--text-3);font-size:11.5px;height:28px;}
-.layoutbtn.remove:hover{color:var(--text);}
+.layoutbtn.icon{width:32px;height:32px;flex:0 0 32px;padding:0;color:var(--text-3);}
+.layoutbtn.icon:hover{color:var(--text);}
+.layoutbtn.icon svg{display:block;}
+.pi .pi-key svg{display:block;margin:0 auto;}
 
 /* segmented control: the highlight slides between options instead of
    popping on each one — sized/positioned in JS (updateThemeIndicator) */
