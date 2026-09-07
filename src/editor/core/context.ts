@@ -15,6 +15,7 @@ import type { SettingsAPI } from "../settings/settings"
 import type { TimesAPI } from "../times/times"
 import type { MinimapAPI } from "../minimap/minimap"
 import type { LayersAPI } from "../layers/layers"
+import type { MeasureAPI } from "../measure/measure"
 
 export interface Rect {
     x: number
@@ -88,6 +89,9 @@ export interface ViewAPI {
 export interface GeometryAPI {
     nodeSize(it: Item): { w: number; h: number }
     boundsOf(its: Item[]): Rect
+    itemBounds(it: Item): Rect
+    selectionBounds(): Rect | null
+    toScreen(x: number, y: number): { x: number; y: number }
 }
 export interface OverlayAPI {
     renderUnderlines(): void
@@ -123,6 +127,7 @@ export interface EditorContext {
     geo: GeometryAPI
     view: ViewAPI
     minimap: MinimapAPI
+    measure: MeasureAPI
     tools: ToolsAPI
     times: TimesAPI
     layers: LayersAPI
