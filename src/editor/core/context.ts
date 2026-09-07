@@ -11,6 +11,8 @@
 //   only call modules installed before it; everything else waits for an event.
 import type { EditorHooks, Fill, Item, Tool } from "./types"
 import type { ToolsAPI } from "../tools/tools"
+import type { SettingsAPI } from "../settings/settings"
+import { type Prefs, loadPrefs } from "../settings/prefs"
 
 export interface Doc {
     // everything saveDoc() serializes — keep this key order, it is the JSON order
@@ -37,6 +39,7 @@ export interface TouchFlags {
 /** Interaction state one module writes and another reads. Read it live off ctx. */
 export interface UiState {
     tool: Tool // tools → read by pointer handlers and the keymap
+    settingsOpen: boolean // settings → both keydown handlers bail while the dialog is up
 }
 
 export interface Dom {
@@ -63,6 +66,20 @@ export interface StoreAPI {
 export interface PersistAPI {
     scheduleSave(): void
 }
+export interface ViewAPI {
+    applyGrid(): void
+    resetView(): void
+}
+export interface TimesAPI {
+    setShowTimes(on: boolean, toast?: boolean): void
+}
+export interface FillAPI {
+    applyBg(): void
+    updateFill(): void
+}
+export interface PanelAPI {
+    fill: FillAPI
+}
 
 export interface EditorContext {
     root: HTMLElement
@@ -71,6 +88,7 @@ export interface EditorContext {
     doc: Doc
     flags: TouchFlags
     ui: UiState
+    prefs: Prefs // loaded here, before any module installs, so applyGrid() can read it at any time
     bus: Bus
     /** document-level listener that unmount removes */
     onDoc<K extends keyof DocumentEventMap>(type: K, fn: (e: DocumentEventMap[K]) => void): void
@@ -80,7 +98,11 @@ export interface EditorContext {
 
     store: StoreAPI
     persist: PersistAPI
+    view: ViewAPI
     tools: ToolsAPI
+    times: TimesAPI
+    panel: PanelAPI
+    settings: SettingsAPI
 }
 
 export const CANVAS_DEFAULT = "#ededed"
@@ -109,7 +131,8 @@ export function createContext(root: HTMLElement, hooks: EditorHooks): EditorCont
             view: { x: 0, y: 0, z: 1 },
         },
         flags: { restoring: false, carryingFrameDrag: false, suppressLeaveBump: false, skipTouch: false },
-        ui: { tool: "move" },
+        ui: { tool: "move", settingsOpen: false },
+        prefs: loadPrefs(),
         bus: {
             subscribe(fn) {
                 listeners.push(fn)
