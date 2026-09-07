@@ -9,7 +9,8 @@
 //   and are resolved at call time, so modules may depend on each other in
 //   both directions without import cycles. A module's `install` body may
 //   only call modules installed before it; everything else waits for an event.
-import type { EditorHooks, Fill, FrameItem, Item, Tool } from "./types"
+import type { EditorHooks, Fill, FrameItem, Item, TextItem, Tool } from "./types"
+import type { DrillAPI } from "../selection/drill"
 import type { ToolsAPI } from "../tools/tools"
 import type { SettingsAPI } from "../settings/settings"
 import type { TimesAPI } from "../times/times"
@@ -55,6 +56,7 @@ export interface UiState {
     heat: boolean // times → renderCanvas re-applies heat colors; fill.applyBg picks the thermal palette
     lastHover: HTMLElement | null // measure / layers → the layer node under the pointer, read by the overlay
     spaceDown: boolean // view → pointer handlers pan instead of selecting while Space is held
+    enteredFrame: number | null // drill → the nested frame whose contents are directly selectable; keymap/pointerdown reset it
 }
 
 export interface Dom {
@@ -78,15 +80,28 @@ export type Disposable = { dispose?(): void }
 export interface StoreAPI {
     touchParentFrames(): void
     containingFrame(it: Item): FrameItem | null
+    selectedItems(): Item[]
+    addItem(props: Partial<TextItem>): TextItem
+    addFrame(props: Partial<FrameItem>): FrameItem
+    /** a freshly drawn frame takes in the loose items that sit fully inside it */
+    adoptLooseText(f: FrameItem): void
 }
 export interface PersistAPI {
     scheduleSave(): void
 }
 export interface GeometryAPI {
+    /** rendered size in world units (frames know theirs; text is measured off its node) */
     nodeSize(it: Item): { w: number; h: number }
-    boundsOf(its: Item[]): Rect
+    boundsOf(its: Item[]): Rect | null
     itemBounds(it: Item): Rect
     selectionBounds(): Rect | null
+    rectContains(f: FrameItem, it: Item): boolean
+    /** smallest frame a box sits fully inside */
+    frameEnclosing(r: Rect, exclude?: number): FrameItem | null
+    /** smallest frame under a world point */
+    frameAt(p: { x: number; y: number }, exclude?: Set<number>): FrameItem | null
+    /** an item's rect clipped by every ancestor frame */
+    visibleRect(it: Item, w: number, h: number): Rect
     /** client (pointer) coords → world */
     toWorld(clientX: number, clientY: number): { x: number; y: number }
     /** world → canvas-relative screen coords */
@@ -133,6 +148,7 @@ export interface EditorContext {
     tools: ToolsAPI
     times: TimesAPI
     layers: LayersAPI
+    drill: DrillAPI
     overlay: OverlayAPI
     gestures: GesturesAPI
     panel: PanelAPI
@@ -165,7 +181,7 @@ export function createContext(root: HTMLElement, hooks: EditorHooks): EditorCont
             view: { x: 0, y: 0, z: 1 },
         },
         flags: { restoring: false, carryingFrameDrag: false, suppressLeaveBump: false, skipTouch: false },
-        ui: { tool: "move", settingsOpen: false, heat: false, lastHover: null, spaceDown: false },
+        ui: { tool: "move", settingsOpen: false, heat: false, lastHover: null, spaceDown: false, enteredFrame: null },
         prefs: loadPrefs(),
         bus: {
             subscribe(fn) {

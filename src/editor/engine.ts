@@ -34,7 +34,9 @@ import { installMinimap } from "./minimap/minimap"
 import { installLayers } from "./layers/layers"
 import { installMeasure } from "./measure/measure"
 import { installView } from "./view/view"
-import { createCoords } from "./core/geometry"
+import { createGeometry } from "./core/geometry"
+import { installDrill } from "./selection/drill"
+import { seedDemoText, centerDefaultItems, seedDemoFrame } from "./demo"
 // the host-facing types keep their import path
 export type { FrameLayout, FrameItem, Fill, FillMode, EditorHooks, EditorAPI } from "./core/types"
 
@@ -54,9 +56,10 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
     const selection = ctx.doc.selection
     const view = ctx.doc.view
     // module slots not yet extracted from this closure: publish the closure's own functions
-    ctx.store = { touchParentFrames, containingFrame }
+    ctx.store = { touchParentFrames, containingFrame, selectedItems, addItem, addFrame, adoptLooseText }
     ctx.persist = { scheduleSave }
-    ctx.geo = { ...createCoords(ctx), nodeSize, boundsOf, itemBounds, selectionBounds }
+    ctx.geo = createGeometry(ctx)
+    const { nodeSize, boundsOf, selectionBounds, itemBounds, rectContains, frameEnclosing, frameAt, visibleRect } = ctx.geo
     ctx.overlay = { renderUnderlines, renderSelectionOverlay }
     ctx.gestures = { startRenaming }
     ctx.panel = { fill: { applyBg, updateFill } }
@@ -205,16 +208,6 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
             if (it.id !== f.id && it.parent == null && rectContains(f, it)) it.parent = f.id
         })
     }
-    // the smallest frame a box sits fully inside — for placing a newly drawn frame
-    function frameEnclosing(r: { x: number; y: number; w: number; h: number }, exclude?: number): FrameItem | null {
-        let best: FrameItem | null = null
-        items.filter(isFrame).forEach((f) => {
-            if (f.id === exclude) return
-            if (r.x >= f.x && r.y >= f.y && r.x + r.w <= f.x + f.w && r.y + r.h <= f.y + f.h && (!best || f.w * f.h < best.w * best.h))
-                best = f
-        })
-        return best
-    }
 
     function addFrame(props: Partial<FrameItem>): FrameItem {
         const now = Date.now()
@@ -245,13 +238,6 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
         const { id: _id, ...rest } = it
         if (isFrame(it)) return addFrame({ ...(rest as FrameItem), x, y }) // a copy keeps its timestamps
         return addItem({ ...(rest as TextItem), x, y })
-    }
-
-    function seedDemoText() {
-        addItem({ x: 60, y: 70, text: "select multiple", size: 32, weight: 400 })
-        addItem({ x: 60, y: 130, text: "lines of text", size: 20, weight: 400 })
-        addItem({ x: 60, y: 180, text: "and use the drop down", size: 16, weight: 400 })
-        addItem({ x: 60, y: 220, text: "to edit them", size: 14, weight: 400 })
     }
 
     /* ---- persistence: the document (layers, counters, background, view)
@@ -351,10 +337,6 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
 
     /* ---- Option/Alt measurement + canvas hover tracking: measure/measure.ts ---- */
     use("measure", installMeasure(ctx))
-    function itemBounds(it: Item) {
-        const { w, h } = nodeSize(it)
-        return { x: it.x, y: it.y, w, h }
-    }
 
     /* ---- tools + toast: tools/tools.ts ---- */
     use("tools", installTools(ctx))
@@ -731,35 +713,8 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
        pointer is when it's dropped, or by the frame drawn around it), so a
        line that runs past the frame's edge still belongs to it and the part
        poking out is clipped. Frames nest only when fully contained. */
-    function frameHolds(f: FrameItem, it: Item) {
-        return f.id !== it.id && it.parent === f.id
-    }
-    // smallest frame under a world point, skipping `exclude` (frames being dragged)
-    function frameAt(p: { x: number; y: number }, exclude?: Set<number>): FrameItem | null {
-        let best: FrameItem | null = null
-        items.filter(isFrame).forEach((f) => {
-            if (exclude?.has(f.id)) return
-            if (p.x < f.x || p.y < f.y || p.x >= f.x + f.w || p.y >= f.y + f.h) return
-            if (!best || f.w * f.h < best.w * best.h) best = f
-        })
-        return best
-    }
     // clip every text layer to the frame it belongs to; text being edited is
     // left unclipped so the caret and what's typed stay visible
-    // an item's own rect intersected with every ancestor frame's, at any
-    // depth — a child frame poking past its parent clips exactly like text
-    // does, and anything inside that child frame is clipped by both levels
-    function visibleRect(it: Item, w: number, h: number) {
-        let r = { x: it.x, y: it.y, w, h }
-        for (let p = containingFrame(it); p; p = containingFrame(p)) {
-            const x1 = Math.max(r.x, p.x),
-                y1 = Math.max(r.y, p.y)
-            const x2 = Math.min(r.x + r.w, p.x + p.w),
-                y2 = Math.min(r.y + r.h, p.y + p.h)
-            r = { x: x1, y: y1, w: Math.max(0, x2 - x1), h: Math.max(0, y2 - y1) }
-        }
-        return r
-    }
     function applyClips() {
         items.forEach((it) => {
             const node = ctx.nodeFor(it.id)
@@ -797,85 +752,8 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
     /* ---- layers panel (parked): layers/layers.ts ---- */
     use("layers", installLayers(ctx))
 
-    // One-time initial layout for the default demo lines: each line is
-    // horizontally centered on its own (a centered text block, not
-    // left-margin-aligned), and the whole stack is shifted so it sits
-    // vertically centered in the canvas — the original relative gaps
-    // between lines (60/50/40px) are preserved, only re-centered as a
-    // group. Requires a render pass first so offsetWidth/offsetHeight
-    // are real measurements, not guesses.
-    function centerDefaultItems() {
-        if (!items.length) return
-        const canvasW = canvas.clientWidth
-        const canvasH = canvas.clientHeight
-        const rects = items.map(nodeSize)
-        const firstY = items[0].y
-        const lastIdx = items.length - 1
-        const blockTop = firstY
-        const blockBottom = items[lastIdx].y + rects[lastIdx].h
-        const shiftY = canvasH / 2 - (blockTop + blockBottom) / 2
-        items.forEach((it, i) => {
-            it.x = Math.round(canvasW / 2 - rects[i].w / 2) // center each line horizontally
-            it.y = Math.round(it.y + shiftY) // recenter the whole stack vertically
-        })
-    }
+    // geometry (sizes, bounds, containment, hit-testing) lives in core/geometry.ts
 
-    // Wrap the demo text in a frame so frames + timestamps are visible on load.
-    function seedDemoFrame() {
-        const b = boundsOf(items.filter(isText))
-        if (!b) return
-        const PAD = 48
-        const f = addFrame({
-            x: Math.round(b.x - PAD),
-            y: Math.round(b.y - PAD),
-            w: Math.round(b.w + PAD * 2),
-            h: Math.round(b.h + PAD * 2),
-        })
-        adoptLooseText(f)
-    }
-
-    /* Rendered size of an item, in world units. Frames know their size;
-       text is measured off its node (unscaled layout size inside #world). */
-    function nodeSize(it: Item) {
-        if (isFrame(it)) return { w: it.w, h: it.h }
-        const node = ctx.nodeFor(it.id)
-        if (!node) return { w: 0, h: 0 }
-        // getBoundingClientRect is fractional (offsetWidth/Height round), and
-        // includes the zoom — divide it back out to get world units
-        const r = node.getBoundingClientRect()
-        return { w: r.width / view.z, h: r.height / view.z }
-    }
-    function boundsOf(list: Item[]) {
-        if (!list.length) return null
-        let x1 = Infinity,
-            y1 = Infinity,
-            x2 = -Infinity,
-            y2 = -Infinity
-        list.forEach((it) => {
-            const { w, h } = nodeSize(it)
-            x1 = Math.min(x1, it.x)
-            y1 = Math.min(y1, it.y)
-            x2 = Math.max(x2, it.x + w)
-            y2 = Math.max(y2, it.y + h)
-        })
-        if (x1 === Infinity) return null
-        return { x: x1, y: y1, w: x2 - x1, h: y2 - y1 }
-    }
-    /* Figma-style bounding box: combined bounds of the selection */
-    function selectionBounds() {
-        return boundsOf(selectedItems())
-    }
-    function rectContains(f: FrameItem, it: Item) {
-        const { w, h } = nodeSize(it)
-        return (
-            it.x >= f.x &&
-            it.y >= f.y &&
-            it.x + w <= f.x + f.w &&
-            it.y + h <= f.y + f.h
-        )
-    }
-    // the frame holding the item (see frameHolds), if any: a text's parent,
-    // or the smallest frame fully containing a frame
     // the frame holding the item — its recorded parent, text or frame alike
     function containingFrame(it: Item): FrameItem | null {
         return frameById(it.parent)
@@ -892,44 +770,9 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
         return items.filter((it) => isInside(it, f))
     }
 
-    /* ---- drilling into nested frames ----
-       Top-level frames are transparent: their contents are selectable
-       directly. A frame nested inside another is opaque until you double-
-       click into it — a single click anywhere on it or its contents selects
-       the nested frame as a whole, so nothing can be dragged out of it by
-       accident. Double-clicking enters it; then its direct children are
-       selectable, and any frame nested one level deeper is the new opaque
-       unit — double-click again to go further. Clicking empty canvas leaves;
-       Escape steps back out one level. */
-    let enteredFrame: number | null = null
-    // the highest frame in `it`'s ancestry that hasn't been entered, or `it` itself
-    function selectTargetFor(it: Item): Item {
-        let cur: Item = it
-        for (;;) {
-            const p = containingFrame(cur)
-            if (!p || p.id === enteredFrame || !containingFrame(p)) return cur
-            cur = p
-        }
-    }
-    function isAncestorFrame(ancestorId: number, it: Item): boolean {
-        for (let p = containingFrame(it); p; p = containingFrame(p)) if (p.id === ancestorId) return true
-        return false
-    }
-    // clicking outside the entered frame's subtree leaves it
-    function leaveUnlessInside(it: Item | null) {
-        if (enteredFrame !== null && (!it || (it.id !== enteredFrame && !isAncestorFrame(enteredFrame, it)))) enteredFrame = null
-    }
-    // double-click: go one level deeper toward `it` and select what's there
-    function drillInto(it: Item) {
-        const target = selectTargetFor(it)
-        if (!isFrame(target) || !containingFrame(target)) return false // nothing nested to enter
-        enteredFrame = target.id
-        const next = selectTargetFor(it)
-        selection.clear()
-        selection.add(next.id)
-        emit()
-        return true
-    }
+    /* ---- drilling into nested frames: selection/drill.ts ---- */
+    use("drill", installDrill(ctx))
+    const { selectTargetFor, leaveUnlessInside, drillInto } = ctx.drill
     function singleSelectedFrame(): FrameItem | null {
         const sel = selectedItems()
         return sel.length === 1 && isFrame(sel[0]) ? sel[0] : null
@@ -980,7 +823,7 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
             hoverTarget &&
             isFrame(hoverTarget) &&
             containingFrame(hoverTarget) &&
-            hoverTarget.id !== enteredFrame &&
+            hoverTarget.id !== ctx.ui.enteredFrame &&
             !(selection.size === 1 && selection.has(hoverTarget.id))
         ) {
             const box = document.createElement("div")
@@ -1665,7 +1508,7 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
         // the blur commits the edit — otherwise the regular selection box (with
         // handles) flashes for the span between mousedown and mouseup
         if (editingEl && selection.size) selection.clear()
-        enteredFrame = null // empty canvas: back to the top level
+        ctx.ui.enteredFrame = null // empty canvas: back to the top level
         const rect = canvas.getBoundingClientRect()
         const s = toWorld(e.clientX, e.clientY)
         let marquee: HTMLDivElement | null = null,
@@ -1850,12 +1693,12 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
         }
         if (e.key === "Escape") {
             if (ctx.ui.tool !== "move") ctx.tools.setTool("move")
-            else if (enteredFrame !== null) {
+            else if (ctx.ui.enteredFrame !== null) {
                 // step out: the frame you were in becomes the selection, and its
                 // own nested parent (if any) becomes the new context
-                const was = frameById(enteredFrame)
+                const was = frameById(ctx.ui.enteredFrame)
                 const up = was ? containingFrame(was) : null
-                enteredFrame = up && containingFrame(up) ? up.id : null
+                ctx.ui.enteredFrame = up && containingFrame(up) ? up.id : null
                 selection.clear()
                 if (was) selection.add(was.id)
                 emit()
@@ -3355,10 +3198,10 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
     })
 
     if (!loadDoc()) {
-        seedDemoText()
+        seedDemoText(ctx)
         renderCanvas()
-        centerDefaultItems() // needs real measurements from the render above
-        seedDemoFrame()
+        centerDefaultItems(ctx) // needs real measurements from the render above
+        seedDemoFrame(ctx)
     }
     applyView()
     ctx.settings.applyTheme()
