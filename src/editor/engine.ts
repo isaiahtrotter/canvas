@@ -30,6 +30,8 @@ import { createContext, CANVAS_DEFAULT, type EditorContext, type Disposable } fr
 import { installTools } from "./tools/tools"
 import { installSettings } from "./settings/settings"
 import { installTimes, HEAT_BG } from "./times/times"
+import { installMinimap } from "./minimap/minimap"
+import { installLayers } from "./layers/layers"
 // the host-facing types keep their import path
 export type { FrameLayout, FrameItem, Fill, FillMode, EditorHooks, EditorAPI } from "./core/types"
 
@@ -49,9 +51,12 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
     const selection = ctx.doc.selection
     const view = ctx.doc.view
     // module slots not yet extracted from this closure: publish the closure's own functions
-    ctx.store = { touchParentFrames }
+    ctx.store = { touchParentFrames, containingFrame }
     ctx.persist = { scheduleSave }
-    ctx.view = { applyGrid, resetView }
+    ctx.geo = { nodeSize, boundsOf }
+    ctx.view = { applyGrid, applyView, resetView, viewportWorldRect }
+    ctx.overlay = { renderUnderlines }
+    ctx.gestures = { startRenaming }
     ctx.panel = { fill: { applyBg, updateFill } }
 
     /* ================= ported app ================= */
@@ -387,142 +392,26 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
         world.style.setProperty("--inv", String(1 / view.z))
         if (zoomVal) zoomVal.textContent = Math.round(view.z * 100) + "%"
         applyGrid()
-        updateMinimap()
+        ctx.minimap.update()
         // screen-space chrome has to follow the view
         renderSelectionOverlay()
         refreshMeasure()
         scheduleSave()
     }
 
-    /* ---- minimap: fades in above the zoom pill once nothing is on screen.
-       Frames are dots, the viewport is a rectangle; click to jump there. ---- */
-    const minimap = root.querySelector<HTMLElement>("#minimap")
     // the viewport rectangle is sized from canvas.clientWidth/Height, so a
     // browser resize has to redraw it too
     const canvasRO =
         typeof ResizeObserver !== "undefined"
             ? new ResizeObserver(() => {
-                  updateMinimap()
+                  ctx.minimap.update()
                   renderSelectionOverlay()
                   applyGrid() // the bitmap is sized to the canvas
               })
             : null
     canvasRO?.observe(canvas)
-    // the minimap is exactly as wide as the zoom pill beneath it; MM_W is
-    // re-measured from the pill each time the map is drawn
-    let MM_W = 110
-    const MM_H = 72,
-        MM_PAD = 4
-    const zoomPill = root.querySelector<HTMLElement>(".zoompill")
-    const PILL_GAP = 12 // the zoom pill's distance from the canvas edge; the minimap sits the same distance above it
-    function syncMinimapWidth() {
-        if (!zoomPill || !minimap) return
-        const w = zoomPill.offsetWidth - 2 // the map is content-box with a 1px border
-        if (w > 0 && w !== MM_W) {
-            MM_W = w
-            minimap.style.width = MM_W + "px"
-        }
-        minimap.style.bottom = PILL_GAP + zoomPill.offsetHeight + PILL_GAP + "px"
-    }
-    let mmScale = 1,
-        mmOx = 0,
-        mmOy = 0 // world → minimap: (x - mmOx) * mmScale
-    function intersects(a, b) {
-        return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y
-    }
-    let mmDragging = false
-    function positionMmView(v: HTMLElement, vp) {
-        v.style.left = (vp.x - mmOx) * mmScale + "px"
-        v.style.top = (vp.y - mmOy) * mmScale + "px"
-        v.style.width = vp.w * mmScale + "px"
-        v.style.height = vp.h * mmScale + "px"
-    }
-    function updateMinimap() {
-        if (!minimap) return
-        const vp = viewportWorldRect()
-        // while the viewport rectangle is being dragged the map stays put
-        // (no refit, no hide) — only the rectangle moves
-        if (mmDragging) {
-            const v = minimap.querySelector<HTMLElement>(".mm-view")
-            if (v) positionMmView(v, vp)
-            return
-        }
-        const anyVisible = items.some((it) => {
-            const { w, h } = nodeSize(it)
-            return intersects({ x: it.x, y: it.y, w, h }, vp)
-        })
-        const show = items.length > 0 && !anyVisible
-        minimap.classList.toggle("on", show)
-        if (!show) return
-        syncMinimapWidth()
-        // fit everything plus the viewport
-        const all = boundsOf(items)
-        const x1 = Math.min(all.x, vp.x),
-            y1 = Math.min(all.y, vp.y)
-        const x2 = Math.max(all.x + all.w, vp.x + vp.w),
-            y2 = Math.max(all.y + all.h, vp.y + vp.h)
-        mmScale = Math.min((MM_W - MM_PAD * 2) / (x2 - x1), (MM_H - MM_PAD * 2) / (y2 - y1))
-        mmOx = x1 - (MM_W / mmScale - (x2 - x1)) / 2
-        mmOy = y1 - (MM_H / mmScale - (y2 - y1)) / 2
-        minimap.innerHTML = ""
-        items.filter(isFrame).forEach((f) => {
-            const d = document.createElement("i")
-            d.className = "mm-dot"
-            d.style.left = (f.x + f.w / 2 - mmOx) * mmScale + "px"
-            d.style.top = (f.y + f.h / 2 - mmOy) * mmScale + "px"
-            minimap.appendChild(d)
-        })
-        const v = document.createElement("div")
-        v.className = "mm-view"
-        positionMmView(v, vp)
-        v.addEventListener("pointerdown", startMmDrag)
-        minimap.appendChild(v)
-    }
-    // Drag the viewport rectangle to pan. It's clamped to the map's edges, so
-    // you can't drag the view out past what the minimap shows.
-    function startMmDrag(e: PointerEvent) {
-        e.stopPropagation()
-        e.preventDefault()
-        mmDragging = true
-        minimap.classList.add("dragging")
-        const start = { x: e.clientX, y: e.clientY, vx: view.x, vy: view.y }
-        const vp0 = viewportWorldRect()
-        // keep an 8px gutter so the rectangle never touches the map's edge
-        const MM_GUTTER = 4
-        const maxX = MM_W - MM_GUTTER - vp0.w * mmScale,
-            maxY = MM_H - MM_GUTTER - vp0.h * mmScale
-        function mv(ev: PointerEvent) {
-            // desired rect position in minimap px, clamped inside the map
-            let mx = (vp0.x - mmOx) * mmScale + (ev.clientX - start.x)
-            let my = (vp0.y - mmOy) * mmScale + (ev.clientY - start.y)
-            mx = Math.max(MM_GUTTER, Math.min(maxX, mx))
-            my = Math.max(MM_GUTTER, Math.min(maxY, my))
-            const wx = mx / mmScale + mmOx,
-                wy = my / mmScale + mmOy
-            view.x = -wx * view.z
-            view.y = -wy * view.z
-            applyView()
-        }
-        function up() {
-            document.removeEventListener("pointermove", mv)
-            document.removeEventListener("pointerup", up)
-            mmDragging = false
-            minimap.classList.remove("dragging")
-            updateMinimap() // refit (and possibly hide) now that the drag is over
-        }
-        document.addEventListener("pointermove", mv)
-        document.addEventListener("pointerup", up)
-    }
-    minimap?.addEventListener("click", (e: MouseEvent) => {
-        if ((e.target as HTMLElement).classList.contains("mm-view")) return
-        const r = minimap.getBoundingClientRect()
-        const wx = (e.clientX - r.left) / mmScale + mmOx
-        const wy = (e.clientY - r.top) / mmScale + mmOy
-        // center the viewport on the clicked world point
-        view.x = canvas.clientWidth / 2 - wx * view.z
-        view.y = canvas.clientHeight / 2 - wy * view.z
-        applyView()
-    })
+    /* ---- minimap: minimap/minimap.ts ---- */
+    use("minimap", installMinimap(ctx))
     function toWorld(clientX: number, clientY: number) {
         const r = canvas.getBoundingClientRect()
         return {
@@ -647,7 +536,6 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
     let altDown = false
     let measureBox: HTMLElement | null = null
     let measureSig = "" // what's currently drawn; skip the rebuild when nothing changed
-    let lastHover: HTMLElement | null = null // last layer under the pointer, kept even without Alt
     function setAltDown(v: boolean) {
         if (altDown === v) return
         altDown = v
@@ -728,6 +616,7 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
         }
     }
     function hoveredItem(): Item | null {
+        const lastHover = ctx.ui.lastHover
         if (!lastHover || !lastHover.isConnected) return null
         return items.find((it) => it.id === Number(lastHover.dataset.id)) ?? null
     }
@@ -753,9 +642,9 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
         // remember what's under the pointer even without Alt, so pressing Alt
         // with a still mouse can show the measurement right away
         const nowHover =
-            e.buttons !== 0 ? lastHover : (e.target as HTMLElement).closest<HTMLElement>(".titem, .frame")
-        if (nowHover !== lastHover) {
-            lastHover = nowHover
+            e.buttons !== 0 ? ctx.ui.lastHover : (e.target as HTMLElement).closest<HTMLElement>(".titem, .frame")
+        if (nowHover !== ctx.ui.lastHover) {
+            ctx.ui.lastHover = nowHover
             renderUnderlines()
         }
         // e.buttons !== 0 means some other gesture (drag, resize, pan...) owns
@@ -767,7 +656,7 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
         refreshMeasure()
     })
     canvas.addEventListener("pointerleave", () => {
-        lastHover = null
+        ctx.ui.lastHover = null
         renderUnderlines()
         clearMeasure()
     })
@@ -991,8 +880,8 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
         applyClips()
         if (ctx.ui.heat) ctx.times.applyHeat()
         renderSelectionOverlay()
-        updateMinimap()
-        renderLayers()
+        ctx.minimap.update()
+        ctx.layers.renderLayers()
     }
 
     // run the layout engine against the current nodes and write back whatever
@@ -1210,91 +1099,8 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
         })
     }
 
-    /* ---- layers panel: top-most first. Loose text sits above every frame;
-       each frame lists the text it holds beneath it. ---- */
-    const layerList = root.querySelector<HTMLElement>("#layerList")
-    const TEXT_ICON =
-        '<svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor"><path d="M1.5 1.5h9v2.2H9.3V3H6.9v7h1.3v1.5H3.8V10h1.3V3H2.7v.7H1.5z"/></svg>'
-    const FRAME_ICON =
-        '<svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"><path d="M3.8 1v10M8.2 1v10M1 3.8h10M1 8.2h10"/></svg>'
-    function layerRow(it: Item, child: boolean) {
-        const row = document.createElement("div")
-        row.className =
-            "layerrow " + (isFrame(it) ? "frame" : "text") + (child ? " child" : "") + (selection.has(it.id) ? " selected" : "")
-        row.dataset.id = String(it.id)
-        row.innerHTML = isFrame(it) ? FRAME_ICON : TEXT_ICON
-        const name = document.createElement("span")
-        name.className = "lname"
-        name.textContent = isFrame(it) ? it.name : it.text
-        row.appendChild(name)
-        row.addEventListener("click", (e) => {
-            if (name.getAttribute("contenteditable") === "true") return
-            if (e.shiftKey) {
-                if (selection.has(it.id)) selection.delete(it.id)
-                else selection.add(it.id)
-            } else {
-                selection.clear()
-                selection.add(it.id)
-            }
-            emit()
-        })
-        // hovering a text row underlines it on the canvas, like hovering the text itself
-        row.addEventListener("mouseenter", () => {
-            const node = ctx.nodeFor(it.id)
-            if (isText(it) && node) {
-                lastHover = node
-                renderUnderlines()
-            }
-        })
-        row.addEventListener("mouseleave", () => {
-            if (lastHover && lastHover.dataset.id === String(it.id)) {
-                lastHover = null
-                renderUnderlines()
-            }
-        })
-        if (isFrame(it))
-            name.addEventListener("dblclick", (e) => {
-                e.stopPropagation()
-                startRenaming(name, it)
-            })
-        return row
-    }
-    function renderLayers() {
-        if (!layerList) return
-        layerList.innerHTML = ""
-        if (!items.length) {
-            const empty = document.createElement("div")
-            empty.className = "empty"
-            empty.textContent = "No layers yet"
-            layerList.appendChild(empty)
-            return
-        }
-        const frames = items.filter(isFrame)
-        const texts = items.filter(isText)
-        const held = new Set<number>()
-        const byFrame = new Map<number, TextItem[]>()
-        texts.forEach((t) => {
-            const f = containingFrame(t)
-            if (!f) return
-            held.add(t.id)
-            if (!byFrame.has(f.id)) byFrame.set(f.id, [])
-            byFrame.get(f.id).push(t)
-        })
-        texts
-            .filter((t) => !held.has(t.id))
-            .reverse()
-            .forEach((t) => layerList.appendChild(layerRow(t, false)))
-        frames
-            .slice()
-            .reverse()
-            .forEach((f) => {
-                layerList.appendChild(layerRow(f, false))
-                ;(byFrame.get(f.id) ?? [])
-                    .slice()
-                    .reverse()
-                    .forEach((t) => layerList.appendChild(layerRow(t, true)))
-            })
-    }
+    /* ---- layers panel (parked): layers/layers.ts ---- */
+    use("layers", installLayers(ctx))
 
     // One-time initial layout for the default demo lines: each line is
     // horizontally centered on its own (a centered text block, not
@@ -1448,6 +1254,7 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
         overlay.querySelectorAll<HTMLElement>(".tunder").forEach((n) => n.remove())
         // hover reflects what a click would select: a text inside a nested
         // frame you haven't entered highlights that frame, not the text
+        const lastHover = ctx.ui.lastHover
         const hoveredItem = lastHover && lastHover.isConnected ? itemById(Number(lastHover.dataset.id)) ?? null : null
         const hoverTarget = hoveredItem ? selectTargetFor(hoveredItem) : null
         items.filter(isText).forEach((it) => {

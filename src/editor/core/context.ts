@@ -9,10 +9,19 @@
 //   and are resolved at call time, so modules may depend on each other in
 //   both directions without import cycles. A module's `install` body may
 //   only call modules installed before it; everything else waits for an event.
-import type { EditorHooks, Fill, Item, Tool } from "./types"
+import type { EditorHooks, Fill, FrameItem, Item, Tool } from "./types"
 import type { ToolsAPI } from "../tools/tools"
 import type { SettingsAPI } from "../settings/settings"
 import type { TimesAPI } from "../times/times"
+import type { MinimapAPI } from "../minimap/minimap"
+import type { LayersAPI } from "../layers/layers"
+
+export interface Rect {
+    x: number
+    y: number
+    w: number
+    h: number
+}
 import { type Prefs, loadPrefs } from "../settings/prefs"
 
 export interface Doc {
@@ -42,6 +51,7 @@ export interface UiState {
     tool: Tool // tools → read by pointer handlers and the keymap
     settingsOpen: boolean // settings → both keydown handlers bail while the dialog is up
     heat: boolean // times → renderCanvas re-applies heat colors; fill.applyBg picks the thermal palette
+    lastHover: HTMLElement | null // measure / layers → the layer node under the pointer, read by the overlay
 }
 
 export interface Dom {
@@ -64,13 +74,26 @@ export type Disposable = { dispose?(): void }
 // interfaces grow as modules are extracted from engine.ts.
 export interface StoreAPI {
     touchParentFrames(): void
+    containingFrame(it: Item): FrameItem | null
 }
 export interface PersistAPI {
     scheduleSave(): void
 }
 export interface ViewAPI {
     applyGrid(): void
+    applyView(): void
     resetView(): void
+    viewportWorldRect(): Rect
+}
+export interface GeometryAPI {
+    nodeSize(it: Item): { w: number; h: number }
+    boundsOf(its: Item[]): Rect
+}
+export interface OverlayAPI {
+    renderUnderlines(): void
+}
+export interface GesturesAPI {
+    startRenaming(name: HTMLElement, it: FrameItem): void
 }
 export interface FillAPI {
     applyBg(): void
@@ -97,9 +120,14 @@ export interface EditorContext {
 
     store: StoreAPI
     persist: PersistAPI
+    geo: GeometryAPI
     view: ViewAPI
+    minimap: MinimapAPI
     tools: ToolsAPI
     times: TimesAPI
+    layers: LayersAPI
+    overlay: OverlayAPI
+    gestures: GesturesAPI
     panel: PanelAPI
     settings: SettingsAPI
 }
@@ -130,7 +158,7 @@ export function createContext(root: HTMLElement, hooks: EditorHooks): EditorCont
             view: { x: 0, y: 0, z: 1 },
         },
         flags: { restoring: false, carryingFrameDrag: false, suppressLeaveBump: false, skipTouch: false },
-        ui: { tool: "move", settingsOpen: false, heat: false },
+        ui: { tool: "move", settingsOpen: false, heat: false, lastHover: null },
         prefs: loadPrefs(),
         bus: {
             subscribe(fn) {
