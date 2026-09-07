@@ -16,6 +16,8 @@ import type { LayoutAPI } from "../canvas/layout"
 import type { OverlayAPI } from "../selection/overlay"
 import type { SnapAPI } from "../selection/snap"
 import type { GesturesAPI } from "../interactions/itemGestures"
+import type { DragAPI } from "../interactions/drag"
+import type { CanvasPointerAPI } from "../interactions/canvasPointer"
 import type { ToolsAPI } from "../tools/tools"
 import type { SettingsAPI } from "../settings/settings"
 import type { TimesAPI } from "../times/times"
@@ -99,6 +101,10 @@ export interface StoreAPI {
     addFrame(props: Partial<FrameItem>): FrameItem
     /** a freshly drawn frame takes in the loose items that sit fully inside it */
     adoptLooseText(f: FrameItem): void
+    /** everything inside a frame at any depth — what moves, deletes and ⌘A-selects with it */
+    descendantsOf(f: FrameItem): Item[]
+    /** copy of `it` placed at (x, y); a copied frame keeps its timestamps */
+    duplicateItem(it: Item, x: number, y: number): Item
     snapshot(): Snapshot
     /** log an undo step — the current state, or `pre` taken before a gesture began */
     pushHistory(pre?: Snapshot): void
@@ -128,9 +134,6 @@ export interface GeometryAPI {
     toScreen(x: number, y: number): { x: number; y: number }
     /** position an #overlay element over a world rect, snapped to whole pixels */
     placeScreenRect(el: HTMLElement, r: Rect): void
-}
-export interface DragAPI {
-    onItemPointerDown(e: PointerEvent, it: Item, el: HTMLElement): void
 }
 export interface FillAPI {
     applyBg(): void
@@ -173,6 +176,7 @@ export interface EditorContext {
     snap: SnapAPI
     gestures: GesturesAPI
     drag: DragAPI
+    canvasPointer: CanvasPointerAPI
     panel: PanelAPI
     settings: SettingsAPI
 }
