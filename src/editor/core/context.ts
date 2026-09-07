@@ -13,6 +13,8 @@ import type { EditorHooks, Fill, FrameItem, Item, TextItem, Tool } from "./types
 import type { DrillAPI } from "../selection/drill"
 import type { CanvasAPI } from "../canvas/render"
 import type { LayoutAPI } from "../canvas/layout"
+import type { OverlayAPI } from "../selection/overlay"
+import type { SnapAPI } from "../selection/snap"
 import type { ToolsAPI } from "../tools/tools"
 import type { SettingsAPI } from "../settings/settings"
 import type { TimesAPI } from "../times/times"
@@ -61,6 +63,7 @@ export interface UiState {
     enteredFrame: number | null // drill → the nested frame whose contents are directly selectable; keymap/pointerdown reset it
     editingEl: HTMLElement | null // gestures → the contenteditable text node; render/clips/overlay/keymap leave it alone
     hoverWash: { id: number; color: string } | null // panel (size handles) → render.applyWash tints that text
+    hideSelBoxWhileNesting: boolean // drag → overlay skips the selection box while a frame is dragged inside another
 }
 
 export interface Dom {
@@ -125,13 +128,11 @@ export interface GeometryAPI {
     /** position an #overlay element over a world rect, snapped to whole pixels */
     placeScreenRect(el: HTMLElement, r: Rect): void
 }
-export interface OverlayAPI {
-    renderUnderlines(): void
-    renderSelectionOverlay(): void
-}
 export interface GesturesAPI {
     startRenaming(name: HTMLElement, it: FrameItem): void
     startEditing(el: HTMLElement, it: TextItem): void
+    /** drag a selection-box corner ("tl".."br") or edge ("t","r","b","l") to resize a lone frame */
+    startResize(e: PointerEvent, it: FrameItem, corner: string): void
 }
 export interface DragAPI {
     onItemPointerDown(e: PointerEvent, it: Item, el: HTMLElement): void
@@ -172,6 +173,7 @@ export interface EditorContext {
     layers: LayersAPI
     drill: DrillAPI
     overlay: OverlayAPI
+    snap: SnapAPI
     gestures: GesturesAPI
     drag: DragAPI
     panel: PanelAPI
@@ -204,7 +206,7 @@ export function createContext(root: HTMLElement, hooks: EditorHooks): EditorCont
             view: { x: 0, y: 0, z: 1 },
         },
         flags: { restoring: false, carryingFrameDrag: false, suppressLeaveBump: false, skipTouch: false },
-        ui: { tool: "move", settingsOpen: false, heat: false, lastHover: null, spaceDown: false, enteredFrame: null, editingEl: null, hoverWash: null },
+        ui: { tool: "move", settingsOpen: false, heat: false, lastHover: null, spaceDown: false, enteredFrame: null, editingEl: null, hoverWash: null, hideSelBoxWhileNesting: false },
         prefs: loadPrefs(),
         bus: {
             subscribe(fn) {

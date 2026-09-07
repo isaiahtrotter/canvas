@@ -39,6 +39,8 @@ import { installDrill } from "./selection/drill"
 import { seedDemoText, centerDefaultItems, seedDemoFrame } from "./demo"
 import { installCanvas } from "./canvas/render"
 import { installLayout, DEFAULT_LAYOUT } from "./canvas/layout"
+import { installOverlay } from "./selection/overlay"
+import { createSnap } from "./selection/snap"
 // the host-facing types keep their import path
 export type { FrameLayout, FrameItem, Fill, FillMode, EditorHooks, EditorAPI } from "./core/types"
 
@@ -77,8 +79,7 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
     ctx.persist = { scheduleSave }
     ctx.geo = createGeometry(ctx)
     const { nodeSize, boundsOf, selectionBounds, itemBounds, rectContains, frameEnclosing, frameAt, visibleRect } = ctx.geo
-    ctx.overlay = { renderUnderlines, renderSelectionOverlay }
-    ctx.gestures = { startRenaming, startEditing }
+    ctx.gestures = { startRenaming, startEditing, startResize }
     ctx.drag = { onItemPointerDown }
     ctx.panel = { fill: { applyBg, updateFill } }
 
@@ -400,222 +401,11 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
         return sel.length === 1 && isFrame(sel[0]) ? sel[0] : null
     }
 
-    // Text underlines (hover, multi-select, marquee touch) are drawn here as
-    // 1px screen-space lines rather than text-decoration inside the scaled
-    // world, so they stay crisp at any zoom. Sits at the glyph baseline,
-    // approximated as 0.22em above the bottom of a *natural* (default
-    // line-height) line box — independent of the item's actual line height.
-    // A taller line box centers its content within the extra space (half
-    // above, half below, same as CSS half-leading), so the natural box's top
-    // sits half the extra height below the item's own y; the glyph baseline
-    // is found from there, not from the bottom of the (possibly much taller)
-    // rendered box.
-    function renderUnderlines() {
-        overlay.querySelectorAll<HTMLElement>(".tunder").forEach((n) => n.remove())
-        // hover reflects what a click would select: a text inside a nested
-        // frame you haven't entered highlights that frame, not the text
-        const lastHover = ctx.ui.lastHover
-        const hoveredItem = lastHover && lastHover.isConnected ? itemById(Number(lastHover.dataset.id)) ?? null : null
-        const hoverTarget = hoveredItem ? selectTargetFor(hoveredItem) : null
-        items.filter(isText).forEach((it) => {
-            const node = ctx.nodeFor(it.id)
-            if (!node || node === ctx.ui.editingEl) return
-            if (!(node.classList.contains("sel-underline") || hoverTarget === it)) return
-            let { w, h } = nodeSize(it)
-            if (!w) return
-            const f = containingFrame(it)
-            if (f) w = Math.max(0, Math.min(w, f.x + f.w - it.x)) // the clipped part has no underline
-            const naturalH = it.size * DEFAULT_LINE_HEIGHT
-            const y = it.y + (h + naturalH) / 2 - it.size * 0.22
-            const a = toScreen(it.x, y)
-            const u = document.createElement("div")
-            u.className = "tunder"
-            u.style.left = Math.round(a.x) + "px"
-            u.style.top = Math.round(a.y) + "px"
-            u.style.width = Math.round(a.x + w * view.z) - Math.round(a.x) + "px"
-            overlay.appendChild(u)
-        })
-        // a child frame (nested inside another) shows no label of its own, so
-        // hovering its own body — not its children, which get their normal
-        // hover treatment above since they're whatever is actually under the
-        // pointer — outlines the whole thing instead. Skipped when it's
-        // already the sole selection, which draws this same box as .selbox.
-        overlay.querySelectorAll<HTMLElement>(".childframe-hover, .childitem-hover").forEach((n) => n.remove())
-        if (
-            hoverTarget &&
-            isFrame(hoverTarget) &&
-            containingFrame(hoverTarget) &&
-            hoverTarget.id !== ctx.ui.enteredFrame &&
-            !(selection.size === 1 && selection.has(hoverTarget.id))
-        ) {
-            const box = document.createElement("div")
-            box.className = "childframe-hover"
-            placeScreenRect(box, itemBounds(hoverTarget))
-            overlay.appendChild(box)
-            // and a dotted box around each thing directly inside it, so you can
-            // see what you'd be getting into before you double-click
-            const f = hoverTarget
-            const fb = itemBounds(f)
-            items
-                .filter((it) => (isText(it) ? it.parent === f.id : it.id !== f.id && containingFrame(it)?.id === f.id))
-                .forEach((it) => {
-                    // clipped to the frame, like the content itself is, so every
-                    // dotted box sits inside the frame's own outline
-                    const b = itemBounds(it)
-                    const x1 = Math.max(b.x, fb.x),
-                        y1 = Math.max(b.y, fb.y)
-                    const x2 = Math.min(b.x + b.w, fb.x + fb.w),
-                        y2 = Math.min(b.y + b.h, fb.y + fb.h)
-                    if (x2 <= x1 || y2 <= y1) return
-                    const dot = document.createElement("div")
-                    dot.className = "childitem-hover"
-                    placeScreenRect(dot, { x: x1, y: y1, w: x2 - x1, h: y2 - y1 })
-                    overlay.appendChild(dot)
-                })
-        }
-    }
-    /* ---- smart guides while dragging ---- */
-    type Rect = { x: number; y: number; w: number; h: number }
-    type SnapGuide = { axis: "x" | "y"; at: number; from: number; to: number }
-    const SNAP_PX = 6 // screen px of pull
-    // the three alignment lines of a box along one axis: start, center, end
-    const linesOf = (r: Rect, axis: "x" | "y") =>
-        axis === "x" ? [r.x, r.x + r.w / 2, r.x + r.w] : [r.y, r.y + r.h / 2, r.y + r.h]
-    /* Given the moving box (base + current delta) and the layers it may align
-       with, find the smallest edge/center-to-edge/center gap per axis within
-       the snap radius. Returns the corrected delta plus one guide per snapped
-       axis, spanning both the moving box and the layer it snapped to.
-
-       Only siblings count. Inside a frame (`context`), that's the frame
-       itself and the other text it holds — nothing outside it. At the top
-       level (no context), it's the frames and the loose text — never the
-       text tucked inside a frame. */
-    function snapToGuides(
-        base: Rect,
-        dx: number,
-        dy: number,
-        moving: Set<number>,
-        locked: "x" | "y" | null,
-        context: FrameItem | null
-    ): { dx: number; dy: number; guides: SnapGuide[] } | null {
-        const sibling = (it: Item) =>
-            context ? it.id === context.id || it.parent === context.id : it.parent == null
-        const targets = items.filter((it) => !moving.has(it.id) && sibling(it)).map((it) => itemBounds(it))
-        if (!targets.length) return null
-        const thr = SNAP_PX / view.z
-        const guides: SnapGuide[] = []
-        let changed = false
-        for (const axis of ["x", "y"] as const) {
-            // an axis Shift has pinned stays pinned
-            if (locked === "x" && axis === "y") continue
-            if (locked === "y" && axis === "x") continue
-            const live: Rect = { x: base.x + dx, y: base.y + dy, w: base.w, h: base.h }
-            const mine = linesOf(live, axis)
-            let best: { delta: number; at: number; target: Rect } | null = null
-            for (const t of targets) {
-                for (const tl of linesOf(t, axis)) {
-                    for (const ml of mine) {
-                        const delta = tl - ml
-                        if (Math.abs(delta) <= thr && (!best || Math.abs(delta) < Math.abs(best.delta)))
-                            best = { delta, at: tl, target: t }
-                    }
-                }
-            }
-            if (!best) continue
-            changed = true
-            if (axis === "x") dx += best.delta
-            else dy += best.delta
-            const snappedLive: Rect = { x: base.x + dx, y: base.y + dy, w: base.w, h: base.h }
-            // the guide runs along the snapped line, spanning both boxes
-            guides.push(
-                axis === "x"
-                    ? {
-                          axis,
-                          at: best.at,
-                          from: Math.min(snappedLive.y, best.target.y),
-                          to: Math.max(snappedLive.y + snappedLive.h, best.target.y + best.target.h),
-                      }
-                    : {
-                          axis,
-                          at: best.at,
-                          from: Math.min(snappedLive.x, best.target.x),
-                          to: Math.max(snappedLive.x + snappedLive.w, best.target.x + best.target.w),
-                      }
-            )
-        }
-        return changed ? { dx, dy, guides } : null
-    }
-    function renderSnapGuides(guides: SnapGuide[]) {
-        overlay.querySelectorAll<HTMLElement>(".snapline").forEach((n) => n.remove())
-        guides.forEach((g) => {
-            const el = document.createElement("div")
-            el.className = "snapline"
-            if (g.axis === "x") {
-                const a = toScreen(g.at, g.from),
-                    b = toScreen(g.at, g.to)
-                el.style.left = Math.round(a.x) + "px"
-                el.style.top = Math.round(a.y) + "px"
-                el.style.width = "1px"
-                el.style.height = Math.round(b.y) - Math.round(a.y) + "px"
-            } else {
-                const a = toScreen(g.from, g.at),
-                    b = toScreen(g.to, g.at)
-                el.style.left = Math.round(a.x) + "px"
-                el.style.top = Math.round(a.y) + "px"
-                el.style.width = Math.round(b.x) - Math.round(a.x) + "px"
-                el.style.height = "1px"
-            }
-            overlay.appendChild(el)
-        })
-    }
-
-    // while a frame is being dragged inside another frame, its selection box is
-    // hidden so the drop reads cleanly; it comes back on release (see the drag)
-    let hideSelBoxWhileNesting = false
-    function renderSelectionOverlay() {
-        canvas.querySelectorAll<HTMLElement>(".selbox").forEach((n) => n.remove())
-        renderFrameLabels()
-        renderUnderlines()
-        if (ctx.ui.editingEl) {
-            // while typing: the same 1px box, sized to the live text, no handles
-            const it = items.find((i) => i.id === Number(ctx.ui.editingEl.dataset.id))
-            if (!it) return
-            const box = document.createElement("div")
-            box.className = "selbox editing"
-            placeScreenRect(box, itemBounds(it))
-            overlay.appendChild(box)
-            return
-        }
-        const b = selectionBounds() // one combined box around everything selected
-        if (!b || hideSelBoxWhileNesting) return
-        const box = document.createElement("div")
-        box.className = "selbox"
-        placeScreenRect(box, b)
-        const frame = singleSelectedFrame() // a lone frame gets live resize handles
-        ;["tl", "tr", "bl", "br"].forEach((c) => {
-            const h = document.createElement("div")
-            h.className = "selhandle " + c
-            if (frame) {
-                h.classList.add("resizable")
-                h.addEventListener("pointerdown", (e) => startResize(e, frame, c))
-            }
-            box.appendChild(h)
-        })
-        if (frame) {
-            // edge handles: drag any side to resize from that side alone
-            ;["t", "r", "b", "l"].forEach((edge) => {
-                const h = document.createElement("div")
-                h.className = "seledge " + edge
-                h.addEventListener("pointerdown", (e) => startResize(e, frame, edge))
-                box.appendChild(h)
-            })
-        }
-        const size = document.createElement("div")
-        size.className = "selsize"
-        size.textContent = Math.round(b.w) + " × " + Math.round(b.h)
-        box.appendChild(size)
-        overlay.appendChild(box)
-    }
+    /* ---- selection chrome (underlines, selection box, snap lines): selection/overlay.ts; snapping: selection/snap.ts ---- */
+    use("overlay", installOverlay(ctx))
+    use("snap", createSnap(ctx))
+    const { renderUnderlines, renderSelectionOverlay, renderSnapGuides } = ctx.overlay
+    const { snapToGuides } = ctx.snap
 
     function startResize(e: PointerEvent, it: FrameItem, corner: string) {
         e.stopPropagation()
@@ -970,13 +760,13 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
             applyClips()
             // a dragged frame that's currently inside another frame loses its
             // selection box for the duration — it's back the moment you release
-            hideSelBoxWhileNesting = starts.some((s) => isFrame(s.it) && containingFrame(s.it) !== null)
+            ctx.ui.hideSelBoxWhileNesting = starts.some((s) => isFrame(s.it) && containingFrame(s.it) !== null)
             renderSelectionOverlay()
             updateProps() // X/Y readouts follow the drag in real time
         }
         function up() {
             markDragging(false)
-            hideSelBoxWhileNesting = false
+            ctx.ui.hideSelBoxWhileNesting = false
             renderSnapGuides([])
             document.removeEventListener("pointermove", mv)
             document.removeEventListener("pointerup", up)
