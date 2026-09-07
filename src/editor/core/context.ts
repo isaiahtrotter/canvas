@@ -16,6 +16,7 @@ import type { TimesAPI } from "../times/times"
 import type { MinimapAPI } from "../minimap/minimap"
 import type { LayersAPI } from "../layers/layers"
 import type { MeasureAPI } from "../measure/measure"
+import type { ViewAPI } from "../view/view"
 
 export interface Rect {
     x: number
@@ -53,6 +54,7 @@ export interface UiState {
     settingsOpen: boolean // settings → both keydown handlers bail while the dialog is up
     heat: boolean // times → renderCanvas re-applies heat colors; fill.applyBg picks the thermal palette
     lastHover: HTMLElement | null // measure / layers → the layer node under the pointer, read by the overlay
+    spaceDown: boolean // view → pointer handlers pan instead of selecting while Space is held
 }
 
 export interface Dom {
@@ -80,21 +82,21 @@ export interface StoreAPI {
 export interface PersistAPI {
     scheduleSave(): void
 }
-export interface ViewAPI {
-    applyGrid(): void
-    applyView(): void
-    resetView(): void
-    viewportWorldRect(): Rect
-}
 export interface GeometryAPI {
     nodeSize(it: Item): { w: number; h: number }
     boundsOf(its: Item[]): Rect
     itemBounds(it: Item): Rect
     selectionBounds(): Rect | null
+    /** client (pointer) coords → world */
+    toWorld(clientX: number, clientY: number): { x: number; y: number }
+    /** world → canvas-relative screen coords */
     toScreen(x: number, y: number): { x: number; y: number }
+    /** position an #overlay element over a world rect, snapped to whole pixels */
+    placeScreenRect(el: HTMLElement, r: Rect): void
 }
 export interface OverlayAPI {
     renderUnderlines(): void
+    renderSelectionOverlay(): void
 }
 export interface GesturesAPI {
     startRenaming(name: HTMLElement, it: FrameItem): void
@@ -163,7 +165,7 @@ export function createContext(root: HTMLElement, hooks: EditorHooks): EditorCont
             view: { x: 0, y: 0, z: 1 },
         },
         flags: { restoring: false, carryingFrameDrag: false, suppressLeaveBump: false, skipTouch: false },
-        ui: { tool: "move", settingsOpen: false, heat: false, lastHover: null },
+        ui: { tool: "move", settingsOpen: false, heat: false, lastHover: null, spaceDown: false },
         prefs: loadPrefs(),
         bus: {
             subscribe(fn) {

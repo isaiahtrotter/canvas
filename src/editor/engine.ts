@@ -33,6 +33,8 @@ import { installTimes, HEAT_BG } from "./times/times"
 import { installMinimap } from "./minimap/minimap"
 import { installLayers } from "./layers/layers"
 import { installMeasure } from "./measure/measure"
+import { installView } from "./view/view"
+import { createCoords } from "./core/geometry"
 // the host-facing types keep their import path
 export type { FrameLayout, FrameItem, Fill, FillMode, EditorHooks, EditorAPI } from "./core/types"
 
@@ -54,9 +56,8 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
     // module slots not yet extracted from this closure: publish the closure's own functions
     ctx.store = { touchParentFrames, containingFrame }
     ctx.persist = { scheduleSave }
-    ctx.geo = { nodeSize, boundsOf, itemBounds, selectionBounds, toScreen }
-    ctx.view = { applyGrid, applyView, resetView, viewportWorldRect }
-    ctx.overlay = { renderUnderlines }
+    ctx.geo = { ...createCoords(ctx), nodeSize, boundsOf, itemBounds, selectionBounds }
+    ctx.overlay = { renderUnderlines, renderSelectionOverlay }
     ctx.gestures = { startRenaming }
     ctx.panel = { fill: { applyBg, updateFill } }
 
@@ -332,203 +333,21 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
     }
 
     /* ================= canvas ================= */
-    const app = root.querySelector<HTMLElement>(".app")
-    const canvas = root.querySelector<HTMLElement>("#canvas")
-    const world = root.querySelector<HTMLElement>("#world")
     // Chrome that must render at a constant screen size (selection box,
-    // handles, marquee, measurement guides) lives here, in screen space,
+    // handles, marquee, measurement guides) lives in #overlay, in screen space,
     // instead of inside the scaled #world — so a 1px border is 1px at any
     // zoom, with no counter-scaling and no blurry fractional strokes.
-    const overlay = root.querySelector<HTMLElement>("#overlay")
+    const { app, canvas, world, overlay } = ctx.dom
     let editingEl = null
     let hoverWash = null // {id, color} — set while a slider handle is hovered/dragged
 
-    /* ---- view: pan + zoom. Items live in world coords; #world carries
-       translate(x,y) scale(z). --inv is 1/z so chrome that should stay a
-       constant size on screen (frame labels, handles) can counter-scale. ---- */
-    const ZOOM_MIN = 0.1,
-        ZOOM_MAX = 20 // 2000%
-    const GRID_FROM = 10 // the pixel grid appears from 1000%
-    const zoomVal = root.querySelector<HTMLElement>("#zoomVal")
-    const grid = root.querySelector<HTMLCanvasElement>("#grid")
-    /* One line per integer world coordinate, each placed at its exact screen
-       position (rounded to a device pixel) so frame edges — which sit on
-       integer coordinates — land on grid lines at any zoom, with no drift.
-
-       Color: the layer composites with mix-blend-mode:difference (CSS), so a
-       faint white line pushes whatever is under it — canvas, frame, text —
-       toward its opposite: about 12% darker on white, 12% lighter on black,
-       with no rim. One honest limit: any neutral overlay that lightens black
-       and darkens white has to cross zero somewhere between, and for white
-       that's exactly 50% gray, where the line fades out over a narrow band.
-       (Two layers with different tones were tried; their shifts oppose each
-       other between their zero points and only move the dead tone around.) */
-    const GRID_LINE = "rgba(255,255,255,.12)"
-    function applyGrid() {
-        if (!grid) return
-        const on = ctx.prefs.grid && view.z >= GRID_FROM
-        grid.classList.toggle("on", on)
-        if (!on) return
-        const dpr = window.devicePixelRatio || 1
-        const W = canvas.clientWidth,
-            H = canvas.clientHeight
-        const pw = Math.round(W * dpr),
-            ph = Math.round(H * dpr)
-        if (grid.width !== pw || grid.height !== ph) {
-            grid.width = pw
-            grid.height = ph
-        }
-        const g = grid.getContext("2d") // the 2D context — not the editor ctx
-        if (!g) return
-        g.clearRect(0, 0, pw, ph)
-        g.fillStyle = GRID_LINE
-        const z = view.z
-        for (let k = Math.ceil(-view.x / z); k <= Math.floor((W - view.x) / z); k++)
-            g.fillRect(Math.round((view.x + k * z) * dpr), 0, 1, ph)
-        for (let k = Math.ceil(-view.y / z); k <= Math.floor((H - view.y) / z); k++)
-            g.fillRect(0, Math.round((view.y + k * z) * dpr), pw, 1)
-    }
-    function applyView() {
-        world.style.transform = `translate(${view.x}px, ${view.y}px) scale(${view.z})`
-        world.style.setProperty("--inv", String(1 / view.z))
-        if (zoomVal) zoomVal.textContent = Math.round(view.z * 100) + "%"
-        applyGrid()
-        ctx.minimap.update()
-        // screen-space chrome has to follow the view
-        renderSelectionOverlay()
-        ctx.measure.refreshMeasure()
-        scheduleSave()
-    }
-
-    // the viewport rectangle is sized from canvas.clientWidth/Height, so a
-    // browser resize has to redraw it too
-    const canvasRO =
-        typeof ResizeObserver !== "undefined"
-            ? new ResizeObserver(() => {
-                  ctx.minimap.update()
-                  renderSelectionOverlay()
-                  applyGrid() // the bitmap is sized to the canvas
-              })
-            : null
-    canvasRO?.observe(canvas)
+    /* ---- view: pan + zoom + pixel grid: view/view.ts ---- */
+    use("view", installView(ctx))
+    // closure-local names for what still lives in this file; extracted modules call through ctx
+    const { applyGrid, applyView, zoomCenter, resetView, viewportWorldRect, setSpaceDown, startPan } = ctx.view
+    const { toWorld, toScreen, placeScreenRect } = ctx.geo
     /* ---- minimap: minimap/minimap.ts ---- */
     use("minimap", installMinimap(ctx))
-    function toWorld(clientX: number, clientY: number) {
-        const r = canvas.getBoundingClientRect()
-        return {
-            x: (clientX - r.left - view.x) / view.z,
-            y: (clientY - r.top - view.y) / view.z,
-        }
-    }
-    // world → canvas-relative screen coords
-    function toScreen(x: number, y: number) {
-        return { x: view.x + x * view.z, y: view.y + y * view.z }
-    }
-    function placeScreenRect(el: HTMLElement, r: { x: number; y: number; w: number; h: number }) {
-        const p = toScreen(r.x, r.y)
-        // snap edges to whole pixels so the 1px strokes stay crisp
-        const l = Math.round(p.x),
-            t = Math.round(p.y)
-        el.style.left = l + "px"
-        el.style.top = t + "px"
-        el.style.width = Math.round(p.x + r.w * view.z) - l + "px"
-        el.style.height = Math.round(p.y + r.h * view.z) - t + "px"
-    }
-    // zoom so the world point under canvas-relative (cx, cy) stays put
-    function zoomAt(factor: number, cx: number, cy: number) {
-        const z = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, view.z * factor))
-        if (z === view.z) return
-        view.x = cx - (cx - view.x) * (z / view.z)
-        view.y = cy - (cy - view.y) * (z / view.z)
-        view.z = z
-        applyView()
-    }
-    function zoomCenter(factor: number) {
-        zoomAt(factor, canvas.clientWidth / 2, canvas.clientHeight / 2)
-    }
-    function resetView() {
-        view.x = 0
-        view.y = 0
-        view.z = 1
-        applyView()
-    }
-    // the visible part of the world, in world coords
-    function viewportWorldRect() {
-        return {
-            x: -view.x / view.z,
-            y: -view.y / view.z,
-            w: canvas.clientWidth / view.z,
-            h: canvas.clientHeight / view.z,
-        }
-    }
-    canvas.addEventListener(
-        "wheel",
-        (e: WheelEvent) => {
-            e.preventDefault()
-            const r = canvas.getBoundingClientRect()
-            // a pinch (ctrlKey) reports smaller deltas than a wheel notch
-            const factor = Math.exp(-e.deltaY * (e.ctrlKey ? 0.01 : 0.0015))
-            zoomAt(factor, e.clientX - r.left, e.clientY - r.top)
-        },
-        { passive: false }
-    )
-    /* Panning is always done through view.x/y + the #world transform — #canvas
-       itself never scrolls under our own code. But while editing text near an
-       edge, the browser's native "keep the caret in view" behavior scrolls
-       #canvas directly, and everything our own render pipeline draws (the
-       selection box, handles, and size tooltip in #overlay) is positioned
-       from view.x/y alone, with no idea that #canvas has scrolled — so it
-       stops tracking the text and is left stranded at its pre-scroll spot.
-       Fold that scroll straight into our own pan instead of fighting it: the
-       browser still decides when and how far to scroll to keep the caret
-       visible, we just absorb the result into view.x/y and re-render through
-       the normal path, so everything — including the selection box — moves
-       together and stays in sync. */
-    canvas.addEventListener("scroll", () => {
-        if (!canvas.scrollLeft && !canvas.scrollTop) return
-        view.x -= canvas.scrollLeft
-        view.y -= canvas.scrollTop
-        canvas.scrollLeft = 0
-        canvas.scrollTop = 0
-        applyView()
-    })
-    root.querySelectorAll<HTMLElement>(".zoompill [data-z]").forEach((b) => {
-        b.addEventListener("click", () => {
-            if (b.dataset.z === "reset") resetView()
-            else zoomCenter(b.dataset.z === "+" ? 1.25 : 1 / 1.25)
-        })
-    })
-
-    /* ---- panning: hold Space and drag, or drag with the middle button ---- */
-    let spaceDown = false
-    function setSpaceDown(v: boolean) {
-        spaceDown = v
-        canvas.classList.toggle("pan-ready", v)
-    }
-    function startPan(e: PointerEvent) {
-        canvas.classList.add("panning")
-        let lx = e.clientX,
-            ly = e.clientY
-        function mv(ev: PointerEvent) {
-            view.x += ev.clientX - lx
-            view.y += ev.clientY - ly
-            lx = ev.clientX
-            ly = ev.clientY
-            applyView()
-        }
-        function up() {
-            canvas.classList.remove("panning")
-            document.removeEventListener("pointermove", mv)
-            document.removeEventListener("pointerup", up)
-        }
-        document.addEventListener("pointermove", mv)
-        document.addEventListener("pointerup", up)
-    }
-    const onWindowBlur = () => {
-        setSpaceDown(false)
-        ctx.measure.setAltDown(false)
-    }
-    window.addEventListener("blur", onWindowBlur)
 
     /* ---- Option/Alt measurement + canvas hover tracking: measure/measure.ts ---- */
     use("measure", installMeasure(ctx))
@@ -1479,7 +1298,7 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
 
     function onItemPointerDown(e: PointerEvent, it: Item, el: HTMLElement) {
         // panning and the frame tool are handled by the canvas — let it bubble
-        if (spaceDown || e.button === 1 || ctx.ui.tool === "frame") return
+        if (ctx.ui.spaceDown || e.button === 1 || ctx.ui.tool === "frame") return
         if (e.button !== 0) return
         if (el.getAttribute("contenteditable") === "true") return
         e.stopPropagation()
@@ -1821,7 +1640,7 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
 
     /* canvas: pan, frame tool, or marquee drag-select on empty space */
     canvas.addEventListener("pointerdown", (e: PointerEvent) => {
-        if (spaceDown || e.button === 1) {
+        if (ctx.ui.spaceDown || e.button === 1) {
             e.preventDefault()
             startPan(e)
             return
@@ -1962,7 +1781,7 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
                     a.tagName === "SELECT" ||
                     a.isContentEditable))
         if (e.code === "Space" && !typing) {
-            if (!spaceDown) setSpaceDown(true)
+            if (!ctx.ui.spaceDown) setSpaceDown(true)
             e.preventDefault()
             return
         }
@@ -3558,11 +3377,9 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
 
     const destroy = () => {
         ctx.disposeDocListeners()
-        window.removeEventListener("blur", onWindowBlur)
         clearTimeout(nudgeTimer)
         clearTimeout(saveTimer)
         window.removeEventListener("pagehide", onPageHide)
-        canvasRO?.disconnect()
         document.fonts?.removeEventListener("loadingdone", onFontsLoaded)
         for (let i = disposers.length - 1; i >= 0; i--) disposers[i]()
         root.innerHTML = ""
