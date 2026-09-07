@@ -19,6 +19,7 @@ import type { GesturesAPI } from "../interactions/itemGestures"
 import type { DragAPI } from "../interactions/drag"
 import type { CanvasPointerAPI } from "../interactions/canvasPointer"
 import type { KeymapAPI } from "../interactions/keymap"
+import type { PanelAPI } from "../panel/panel"
 import type { ToolsAPI } from "../tools/tools"
 import type { SettingsAPI } from "../settings/settings"
 import type { TimesAPI } from "../times/times"
@@ -68,6 +69,7 @@ export interface UiState {
     editingEl: HTMLElement | null // gestures → the contenteditable text node; render/clips/overlay/keymap leave it alone
     hoverWash: { id: number; color: string } | null // panel (size handles) → render.applyWash tints that text
     hideSelBoxWhileNesting: boolean // drag → overlay skips the selection box while a frame is dragged inside another
+    activeVariant: number // panel → which size-widget design (1–3) the Text section mounts
 }
 
 export interface Dom {
@@ -98,7 +100,10 @@ export interface StoreAPI {
     frameById(id: number | null | undefined): FrameItem | null
     containingFrame(it: Item): FrameItem | null
     selectedItems(): Item[]
+    selectedTextItems(): TextItem[]
     singleSelectedFrame(): FrameItem | null
+    /** the palette color assigned to a text layer for the size widget's handles */
+    selColor(id: number): string
     addItem(props: Partial<TextItem>): TextItem
     addFrame(props: Partial<FrameItem>): FrameItem
     /** a freshly drawn frame takes in the loose items that sit fully inside it */
@@ -136,15 +141,6 @@ export interface GeometryAPI {
     toScreen(x: number, y: number): { x: number; y: number }
     /** position an #overlay element over a world rect, snapped to whole pixels */
     placeScreenRect(el: HTMLElement, r: Rect): void
-}
-export interface FillAPI {
-    applyBg(): void
-    updateFill(): void
-}
-export interface PanelAPI {
-    fill: FillAPI
-    /** refresh the X/Y/W/H fields from the selection */
-    updateProps(): void
 }
 
 export interface EditorContext {
@@ -210,7 +206,7 @@ export function createContext(root: HTMLElement, hooks: EditorHooks): EditorCont
             view: { x: 0, y: 0, z: 1 },
         },
         flags: { restoring: false, carryingFrameDrag: false, suppressLeaveBump: false, skipTouch: false },
-        ui: { tool: "move", settingsOpen: false, heat: false, lastHover: null, spaceDown: false, enteredFrame: null, editingEl: null, hoverWash: null, hideSelBoxWhileNesting: false },
+        ui: { tool: "move", settingsOpen: false, heat: false, lastHover: null, spaceDown: false, enteredFrame: null, editingEl: null, hoverWash: null, hideSelBoxWhileNesting: false, activeVariant: 1 },
         prefs: loadPrefs(),
         bus: {
             subscribe(fn) {
