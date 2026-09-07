@@ -9,7 +9,8 @@
 //   and are resolved at call time, so modules may depend on each other in
 //   both directions without import cycles. A module's `install` body may
 //   only call modules installed before it; everything else waits for an event.
-import type { EditorHooks, Fill, Item } from "./types"
+import type { EditorHooks, Fill, Item, Tool } from "./types"
+import type { ToolsAPI } from "../tools/tools"
 
 export interface Doc {
     // everything saveDoc() serializes — keep this key order, it is the JSON order
@@ -31,6 +32,11 @@ export interface TouchFlags {
     suppressLeaveBump: boolean
     /** true while a drag re-renders mid-gesture: nothing is diffed or stamped */
     skipTouch: boolean
+}
+
+/** Interaction state one module writes and another reads. Read it live off ctx. */
+export interface UiState {
+    tool: Tool // tools → read by pointer handlers and the keymap
 }
 
 export interface Dom {
@@ -64,6 +70,7 @@ export interface EditorContext {
     dom: Dom
     doc: Doc
     flags: TouchFlags
+    ui: UiState
     bus: Bus
     /** document-level listener that unmount removes */
     onDoc<K extends keyof DocumentEventMap>(type: K, fn: (e: DocumentEventMap[K]) => void): void
@@ -73,6 +80,7 @@ export interface EditorContext {
 
     store: StoreAPI
     persist: PersistAPI
+    tools: ToolsAPI
 }
 
 export const CANVAS_DEFAULT = "#ededed"
@@ -101,6 +109,7 @@ export function createContext(root: HTMLElement, hooks: EditorHooks): EditorCont
             view: { x: 0, y: 0, z: 1 },
         },
         flags: { restoring: false, carryingFrameDrag: false, suppressLeaveBump: false, skipTouch: false },
+        ui: { tool: "move" },
         bus: {
             subscribe(fn) {
                 listeners.push(fn)

@@ -26,7 +26,8 @@ import {
     letterSpacingOf,
     PALETTE,
 } from "./core/types"
-import { createContext, CANVAS_DEFAULT } from "./core/context"
+import { createContext, CANVAS_DEFAULT, type EditorContext, type Disposable } from "./core/context"
+import { installTools } from "./tools/tools"
 // the host-facing types keep their import path
 export type { FrameLayout, FrameItem, Fill, FillMode, EditorHooks, EditorAPI } from "./core/types"
 
@@ -34,6 +35,13 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
     root.innerHTML = MARKUP
     const ctx = createContext(root, hooks)
     const onDoc = ctx.onDoc
+    // each extracted module installs into its ctx slot at the point in this
+    // closure where its code used to sit, and hands back its own cleanup
+    const disposers: Array<() => void> = []
+    const use = <K extends keyof EditorContext>(slot: K, api: EditorContext[K] & Disposable) => {
+        ctx[slot] = api
+        if (api.dispose) disposers.push(() => api.dispose())
+    }
     // the document lives on ctx; these are the same objects (mutated in place, never reassigned)
     const items = ctx.doc.items
     const selection = ctx.doc.selection
@@ -760,30 +768,8 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
         clearMeasure()
     })
 
-    /* ---- tools: V = move/select, F = draw a frame ---- */
-    type Tool = "move" | "frame" | "text"
-    let tool: Tool = "move"
-    function setTool(t: Tool) {
-        tool = t
-        canvas.classList.toggle("tool-frame", t === "frame")
-        canvas.classList.toggle("tool-text", t === "text")
-        root.querySelectorAll<HTMLElement>(".toolpill [data-tool]").forEach(
-            (b) => b.classList.toggle("active", b.dataset.tool === t)
-        )
-    }
-    root.querySelectorAll<HTMLElement>(".toolpill [data-tool]").forEach((b) =>
-        b.addEventListener("click", () => setTool(b.dataset.tool as Tool))
-    )
-
-    /* ---- toast ---- */
-    const toastEl = root.querySelector<HTMLElement>("#toast")
-    let toastTimer = null
-    function showToast(msg: string) {
-        toastEl.textContent = msg
-        toastEl.classList.add("show")
-        clearTimeout(toastTimer)
-        toastTimer = setTimeout(() => toastEl.classList.remove("show"), 1800)
-    }
+    /* ---- tools + toast: tools/tools.ts ---- */
+    use("tools", installTools(ctx))
 
     /* ---- frame timestamps: shown beside the name; Shift+T toggles, and
        the choice sticks in localStorage ---- */
@@ -808,7 +794,7 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
             /* ignore */
         }
         applyShowTimes()
-        if (toast) showToast(showTimes ? "Timestamps shown" : "Timestamps hidden")
+        if (toast) ctx.tools.showToast(showTimes ? "Timestamps shown" : "Timestamps hidden")
     }
     function toggleTimes() {
         setShowTimes(!showTimes)
@@ -911,7 +897,7 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
         heatTransTimer = setTimeout(() => canvas.classList.remove("heat-transition"), 350)
         clearInterval(heatTimer)
         if (on) heatTimer = setInterval(applyHeat, 1000)
-        showToast(on ? "Heatmap on" : "Heatmap off")
+        ctx.tools.showToast(on ? "Heatmap on" : "Heatmap off")
     }
     function toggleHeat() {
         setHeat(!heat)
@@ -1276,10 +1262,10 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
         const f = singleSelectedFrame()
         if (f) {
             setLayout(f, f.layout ? null : { ...DEFAULT_LAYOUT })
-            showToast(f.layout ? "Smart layout added" : "Smart layout removed")
+            ctx.tools.showToast(f.layout ? "Smart layout added" : "Smart layout removed")
             return
         }
-        if (wrapSelectionInLayout()) showToast("Smart layout added")
+        if (wrapSelectionInLayout()) ctx.tools.showToast("Smart layout added")
     }
 
     /* Text belongs to the frame recorded in its `parent` (set by where the
@@ -1935,7 +1921,7 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
 
     function onItemPointerDown(e: PointerEvent, it: Item, el: HTMLElement) {
         // panning and the frame tool are handled by the canvas — let it bubble
-        if (spaceDown || e.button === 1 || tool === "frame") return
+        if (spaceDown || e.button === 1 || ctx.ui.tool === "frame") return
         if (e.button !== 0) return
         if (el.getAttribute("contenteditable") === "true") return
         e.stopPropagation()
@@ -2253,7 +2239,7 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
             adoptLooseText(f)
             selection.clear()
             selection.add(f.id)
-            setTool("move")
+            ctx.tools.setTool("move")
             emit()
         }
         document.addEventListener("pointermove", mv)
@@ -2269,7 +2255,7 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
         const it = addItem({ x: Math.round(p.x), y: Math.round(p.y), parent: parent ? parent.id : null })
         selection.clear()
         selection.add(it.id)
-        setTool("move")
+        ctx.tools.setTool("move")
         emit()
         const el = ctx.nodeFor(it.id)
         if (el) startEditing(el, it)
@@ -2283,11 +2269,11 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
             return
         }
         if (e.button !== 0) return
-        if (tool === "frame") {
+        if (ctx.ui.tool === "frame") {
             startFrameDraw(e)
             return
         }
-        if (tool === "text") {
+        if (ctx.ui.tool === "text") {
             // focusing the new text node synchronously in this same handler —
             // without this, the browser's own default mousedown-focus
             // behavior can steal focus back once the event finishes, since
@@ -2466,15 +2452,15 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
             return
         }
         if (e.key === "v" || e.key === "V") {
-            setTool("move")
+            ctx.tools.setTool("move")
             return
         }
         if (e.key === "f" || e.key === "F") {
-            setTool("frame")
+            ctx.tools.setTool("frame")
             return
         }
         if (e.key === "t" || e.key === "T") {
-            setTool("text")
+            ctx.tools.setTool("text")
             return
         }
         if (e.key.startsWith("Arrow") && selection.size) {
@@ -2486,7 +2472,7 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
             return
         }
         if (e.key === "Escape") {
-            if (tool !== "move") setTool("move")
+            if (ctx.ui.tool !== "move") ctx.tools.setTool("move")
             else if (enteredFrame !== null) {
                 // step out: the frame you were in becomes the selection, and its
                 // own nested parent (if any) becomes the new context
@@ -4260,7 +4246,6 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
         clearInterval(timesTimer)
         clearInterval(heatTimer)
         clearTimeout(heatTransTimer)
-        clearTimeout(toastTimer)
         clearTimeout(nudgeTimer)
         clearTimeout(saveTimer)
         window.removeEventListener("pagehide", onPageHide)
@@ -4268,6 +4253,7 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
         document.fonts?.removeEventListener("loadingdone", onFontsLoaded)
         systemDark?.removeEventListener("change", onSystemTheme)
         document.documentElement.classList.remove("dark")
+        for (let i = disposers.length - 1; i >= 0; i--) disposers[i]()
         root.innerHTML = ""
     }
 

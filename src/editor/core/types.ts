@@ -82,6 +82,8 @@ export interface EditorAPI {
     destroy: () => void
 }
 
+export type Tool = "move" | "frame" | "text"
+
 export type Item = TextItem | FrameItem
 export const isFrame = (it: Item): it is FrameItem => it.kind === "frame"
 export const isText = (it: Item): it is TextItem => it.kind === "text"
