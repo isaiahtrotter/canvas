@@ -9,7 +9,9 @@
 //   and are resolved at call time, so modules may depend on each other in
 //   both directions without import cycles. A module's `install` body may
 //   only call modules installed before it; everything else waits for an event.
-import type { EditorHooks, Fill, FrameItem, Item, TextItem, Tool } from "./types"
+import type { EditorHooks, Fill, FrameItem, Item, Tool } from "./types"
+import type { StoreAPI } from "./store"
+import type { PersistAPI } from "./persist"
 import type { DrillAPI } from "../selection/drill"
 import type { CanvasAPI } from "../canvas/render"
 import type { LayoutAPI } from "../canvas/layout"
@@ -88,40 +90,8 @@ export interface Bus {
 
 export type Disposable = { dispose?(): void }
 
-// Module slots. Each is filled by mountEditor when that module installs; the
-// interfaces grow as modules are extracted from engine.ts.
-export interface Snapshot {
-    items: Item[]
-    selection: number[]
-}
-export interface StoreAPI {
-    touchParentFrames(): void
-    itemById(id: number): Item | undefined
-    frameById(id: number | null | undefined): FrameItem | null
-    containingFrame(it: Item): FrameItem | null
-    selectedItems(): Item[]
-    selectedTextItems(): TextItem[]
-    singleSelectedFrame(): FrameItem | null
-    /** the palette color assigned to a text layer for the size widget's handles */
-    selColor(id: number): string
-    addItem(props: Partial<TextItem>): TextItem
-    addFrame(props: Partial<FrameItem>): FrameItem
-    /** a freshly drawn frame takes in the loose items that sit fully inside it */
-    adoptLooseText(f: FrameItem): void
-    /** everything inside a frame at any depth — what moves, deletes and ⌘A-selects with it */
-    descendantsOf(f: FrameItem): Item[]
-    /** copy of `it` placed at (x, y); a copied frame keeps its timestamps */
-    duplicateItem(it: Item, x: number, y: number): Item
-    snapshot(): Snapshot
-    /** log an undo step — the current state, or `pre` taken before a gesture began */
-    pushHistory(pre?: Snapshot): void
-    /** the per-text signature/parent seen at the last emit; layout moves update it so they don't count as edits */
-    lastText: Map<number, { sig: string; parent: number | null }>
-    textSig(it: TextItem): string
-}
-export interface PersistAPI {
-    scheduleSave(): void
-}
+// Module slots. Each is filled by mountEditor when that module installs; a
+// slot is only valid after its module's install has run.
 export interface GeometryAPI {
     /** rendered size in world units (frames know theirs; text is measured off its node) */
     nodeSize(it: Item): { w: number; h: number }
