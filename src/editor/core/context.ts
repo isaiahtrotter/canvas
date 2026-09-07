@@ -18,6 +18,7 @@ import type { SnapAPI } from "../selection/snap"
 import type { GesturesAPI } from "../interactions/itemGestures"
 import type { DragAPI } from "../interactions/drag"
 import type { CanvasPointerAPI } from "../interactions/canvasPointer"
+import type { KeymapAPI } from "../interactions/keymap"
 import type { ToolsAPI } from "../tools/tools"
 import type { SettingsAPI } from "../settings/settings"
 import type { TimesAPI } from "../times/times"
@@ -94,6 +95,7 @@ export interface Snapshot {
 export interface StoreAPI {
     touchParentFrames(): void
     itemById(id: number): Item | undefined
+    frameById(id: number | null | undefined): FrameItem | null
     containingFrame(it: Item): FrameItem | null
     selectedItems(): Item[]
     singleSelectedFrame(): FrameItem | null
@@ -177,6 +179,7 @@ export interface EditorContext {
     gestures: GesturesAPI
     drag: DragAPI
     canvasPointer: CanvasPointerAPI
+    keymap: KeymapAPI
     panel: PanelAPI
     settings: SettingsAPI
 }

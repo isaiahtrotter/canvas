@@ -44,6 +44,7 @@ import { createSnap } from "./selection/snap"
 import { installItemGestures } from "./interactions/itemGestures"
 import { installDrag } from "./interactions/drag"
 import { installCanvasPointer } from "./interactions/canvasPointer"
+import { installKeymap } from "./interactions/keymap"
 // the host-facing types keep their import path
 export type { FrameLayout, FrameItem, Fill, FillMode, EditorHooks, EditorAPI } from "./core/types"
 
@@ -66,6 +67,7 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
     ctx.store = {
         touchParentFrames,
         itemById,
+        frameById,
         containingFrame,
         selectedItems,
         singleSelectedFrame,
@@ -418,146 +420,9 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
     /* ---- canvas pointerdown (pan / draw frame / place text / marquee): interactions/canvasPointer.ts ---- */
     use("canvasPointer", installCanvasPointer(ctx))
 
-    /* keyboard: tools, zoom, timestamps, delete */
-    onDoc("keydown", (e) => {
-        if (ctx.ui.settingsOpen) {
-            if (e.key === "Escape") {
-                e.preventDefault()
-                ctx.settings.closeSettings()
-            }
-            return
-        }
-        if ((e.metaKey || e.ctrlKey) && e.key === ",") {
-            e.preventDefault()
-            ctx.settings.openSettings()
-            return
-        }
-        if ((e.metaKey || e.ctrlKey) && e.key === "\\") {
-            e.preventDefault()
-            ctx.settings.toggleSidebars()
-            return
-        }
-        const a = document.activeElement as HTMLElement | null
-        // an active text edit counts as typing even if focus is elsewhere
-        const typing =
-            !!ctx.ui.editingEl ||
-            (a &&
-                (a.tagName === "INPUT" ||
-                    a.tagName === "SELECT" ||
-                    a.isContentEditable))
-        if (e.code === "Space" && !typing) {
-            if (!ctx.ui.spaceDown) setSpaceDown(true)
-            e.preventDefault()
-            return
-        }
-        if (e.key === "Alt") {
-            ctx.measure.setAltDown(true)
-            return
-        }
-        const mod = e.metaKey || e.ctrlKey
-        if (mod && (e.key === "=" || e.key === "+")) {
-            e.preventDefault()
-            zoomCenter(1.25)
-            return
-        }
-        if (mod && e.key === "-") {
-            e.preventDefault()
-            zoomCenter(1 / 1.25)
-            return
-        }
-        if (mod && e.key === "0") {
-            e.preventDefault()
-            resetView()
-            return
-        }
-        if (mod && (e.key === "a" || e.key === "A")) {
-            // editing text (or in a sidebar field): the browser's own select-all
-            if (typing) return
-            e.preventDefault()
-            selectAll()
-            return
-        }
-        if (typing || mod) return
-        if (e.shiftKey && (e.key === "T" || e.key === "t")) {
-            e.preventDefault()
-            ctx.times.toggleTimes()
-            return
-        }
-        if (e.shiftKey && (e.key === "H" || e.key === "h")) {
-            e.preventDefault()
-            ctx.times.toggleHeat()
-            return
-        }
-        if (e.shiftKey && (e.key === "A" || e.key === "a")) {
-            e.preventDefault()
-            toggleLayout()
-            return
-        }
-        if (e.key === "v" || e.key === "V") {
-            ctx.tools.setTool("move")
-            return
-        }
-        if (e.key === "f" || e.key === "F") {
-            ctx.tools.setTool("frame")
-            return
-        }
-        if (e.key === "t" || e.key === "T") {
-            ctx.tools.setTool("text")
-            return
-        }
-        if (e.key.startsWith("Arrow") && selection.size) {
-            e.preventDefault()
-            const step = e.shiftKey ? 10 : 1
-            const dx = e.key === "ArrowLeft" ? -step : e.key === "ArrowRight" ? step : 0
-            const dy = e.key === "ArrowUp" ? -step : e.key === "ArrowDown" ? step : 0
-            nudgeSelection(dx, dy)
-            return
-        }
-        if (e.key === "Escape") {
-            if (ctx.ui.tool !== "move") ctx.tools.setTool("move")
-            else if (ctx.ui.enteredFrame !== null) {
-                // step out: the frame you were in becomes the selection, and its
-                // own nested parent (if any) becomes the new context
-                const was = frameById(ctx.ui.enteredFrame)
-                const up = was ? containingFrame(was) : null
-                ctx.ui.enteredFrame = up && containingFrame(up) ? up.id : null
-                selection.clear()
-                if (was) selection.add(was.id)
-                emit()
-            } else if (selection.size) {
-                selection.clear()
-                emit()
-            }
-            return
-        }
-        if (e.key !== "Delete" && e.key !== "Backspace") return
-        if (!selection.size) return
-        e.preventDefault()
-        pushHistory()
-        // a frame takes everything inside it along, nested frames included
-        const doomed = new Set(selection)
-        items.filter(isFrame).forEach((f) => {
-            if (!doomed.has(f.id)) return
-            descendantsOf(f).forEach((d) => doomed.add(d.id))
-        })
-        // a deleted item's frame counts as edited too — unless the frame is
-        // being deleted along with it
-        const now = Date.now()
-        items.forEach((it) => {
-            if (!doomed.has(it.id)) return
-            const f = containingFrame(it)
-            if (f && !doomed.has(f.id)) f.updatedAt = now
-        })
-        for (let i = items.length - 1; i >= 0; i--) {
-            if (doomed.has(items[i].id)) items.splice(i, 1)
-        }
-        selection.clear()
-        emit()
-    })
-    onDoc("keyup", (e) => {
-        if (e.code === "Space") setSpaceDown(false)
-        if (e.key === "Alt") ctx.measure.setAltDown(false)
-    })
+    /* ---- keyboard (tools, zoom, toggles, ⌘A, nudge, delete, Escape): interactions/keymap.ts ---- */
+    use("keymap", installKeymap(ctx))
+    const { moveSelection } = ctx.keymap
 
     /* version buttons in the canvas pill */
     root.querySelectorAll<HTMLElement>(".vergroup .vbtn").forEach((b) => {
@@ -1238,50 +1103,6 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
         moveSelection(0, dy)
         emit()
     })
-    // Cmd/Ctrl+A: with frames selected, select what's inside them (text, and
-    // frames fully contained); otherwise select every layer
-    function selectAll() {
-        const frames = selectedItems().filter(isFrame)
-        const inside = new Set<number>()
-        frames.forEach((f) => descendantsOf(f).forEach((d) => inside.add(d.id)))
-        selection.clear()
-        if (inside.size) inside.forEach((id) => selection.add(id))
-        else items.forEach((it) => selection.add(it.id))
-        emit()
-    }
-
-    // Arrow keys: 1px, or 10px with Shift. A frame carries the text inside it,
-    // like a drag does. A quick run of presses is one undo step.
-    let nudgePre = null
-    let nudgeTimer = null
-    function nudgeSelection(dx: number, dy: number) {
-        const moving = new Map<number, Item>()
-        selectedItems().forEach((it) => moving.set(it.id, it))
-        selectedItems()
-            .filter(isFrame)
-            .forEach((f) => descendantsOf(f).forEach((d) => moving.set(d.id, d)))
-        if (!moving.size) return
-        if (!nudgePre) {
-            nudgePre = snapshot()
-            pushHistory(nudgePre)
-        }
-        clearTimeout(nudgeTimer)
-        nudgeTimer = setTimeout(() => (nudgePre = null), 600)
-        moving.forEach((it) => {
-            it.x += dx
-            it.y += dy
-        })
-        if (Array.from(moving.values()).some(isFrame)) ctx.flags.carryingFrameDrag = true
-        emit()
-        ctx.flags.carryingFrameDrag = false
-    }
-    // repositioning a frame (typed X/Y) isn't a content edit either
-    function moveSelection(dx: number, dy: number) {
-        selectedItems().forEach((it) => {
-            it.x += dx
-            it.y += dy
-        })
-    }
     dimW.addEventListener("focus", armPos)
     dimH.addEventListener("focus", armPos)
     ;([
@@ -2042,7 +1863,6 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
 
     const destroy = () => {
         ctx.disposeDocListeners()
-        clearTimeout(nudgeTimer)
         clearTimeout(saveTimer)
         window.removeEventListener("pagehide", onPageHide)
         for (let i = disposers.length - 1; i >= 0; i--) disposers[i]()
