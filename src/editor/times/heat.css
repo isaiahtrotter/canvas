@@ -1,0 +1,90 @@
+/* Heatmap mode (Shift+H): per-node heat colors, glow, sheen, the key, and the toggle cross-fade. */
+/* ---- heatmap mode (Shift+H): canvas only, the panels are untouched. The
+   per-node colors come from --heat / --heat-frame set in applyHeat(); the
+   canvas background and label colors come from applyBg(). Transitions are
+   scoped to .heat-transition (added for 350ms around a toggle) so ordinary
+   fill changes never animate. ---- */
+/* The frame's heat fill lives on a ::before layer so the blur and glow can
+   sit on the fill alone — the name and timestamp above it stay crisp. The
+   ::before exists at all times (transparent) so the toggle can cross-fade. */
+.frame::before{
+  content:'';position:absolute;inset:0;background:transparent;pointer-events:none;
+}
+/* the glow: a shadow-only layer behind the frame (z-index:-1 in #world's
+   stacking context), pulsing slowly; --phase staggers frames so they don't
+   breathe in lockstep. Radii scale by --inv so the glow is the same size on
+   screen at any zoom. */
+.frame::after{
+  content:'';position:absolute;inset:0;pointer-events:none;z-index:-1;opacity:0;
+}
+.canvas.heat .frame{background:transparent !important;}
+/* the fill is a solid heat color (so it can transition) with a translucent
+   sheen band on top that travels top-left → bottom-right like a slow wave.
+   The band sits in the middle of a 300% gradient so there's a pause between
+   passes. Note the direction: with an oversized image, a larger
+   background-position moves the image up-left, so the band goes 100% → 0%. */
+.canvas.heat .frame::before{
+  background-color:var(--heat-frame, #1a0533);
+  background-image:linear-gradient(135deg,
+    transparent 0%, transparent 36%,
+    rgba(255,255,255,.10) 44%, rgba(255,255,255,.22) 50%, rgba(255,255,255,.10) 56%,
+    transparent 64%, transparent 100%);
+  background-size:300% 300%;
+  filter:blur(calc(.8px * var(--inv)));
+  animation:heatwave 7s linear infinite;
+  animation-delay:calc(var(--phase, 0) * -7s);
+}
+@keyframes heatwave{from{background-position:100% 100%;}to{background-position:0% 0%;}}
+.canvas.heat .frame::after{
+  box-shadow:0 0 calc(34px * var(--inv)) calc(8px * var(--inv)) var(--heat-frame, #1a0533);
+  animation:heatglow 3.6s ease-in-out infinite;
+  animation-delay:calc(var(--phase, 0) * -3.6s);
+}
+.canvas.heat .titem{
+  color:var(--heat, #fbea6a) !important;
+  filter:blur(calc(.8px * var(--inv)));
+  animation:heatglow-text 3.6s ease-in-out infinite;
+  animation-delay:calc(var(--phase, 0) * -3.6s);
+}
+/* A blurred element whose left/top change on every pointermove (a drag) is a
+   known Chromium/WebKit compositing case: the filter's expanded paint region
+   can go stale relative to the new position, visibly clipping the edges of
+   the blur — on text that reads as descenders getting cut flat. Dropping the
+   blur for the duration of the drag sidesteps it; it's back the moment the
+   drag ends, when the element stops moving every frame. */
+.canvas.heat .titem.dragging{filter:none;}
+@keyframes heatglow{0%,100%{opacity:.3;}50%{opacity:.85;}}
+/* a thin dark edge keeps text readable on a frame of the same heat */
+@keyframes heatglow-text{
+  0%,100%{text-shadow:0 0 calc(2px * var(--inv)) rgba(0,0,0,.7), 0 0 calc(6px * var(--inv)) var(--heat, #fbea6a);}
+  50%{text-shadow:0 0 calc(2px * var(--inv)) rgba(0,0,0,.7), 0 0 calc(18px * var(--inv)) var(--heat, #fbea6a);}
+}
+/* steady state: applyHeat() refreshes --heat every second, and a 1s linear
+   transition on the properties that read it turns those steps into a drift */
+.canvas.heat .frame::before{transition:background-color 1s linear;}
+.canvas.heat .frame::after{transition:box-shadow 1s linear;}
+.canvas.heat .titem{transition:color 1s linear, text-shadow 1s linear;}
+/* toggling: 300ms ease-out cross-fade (after the steady-state rules so it wins) */
+.canvas.heat-transition{transition:background-color .3s ease-out;}
+.canvas.heat-transition .frame{transition:background-color .3s ease-out;}
+.canvas.heat-transition .frame::before{transition:background-color .3s ease-out, filter .3s ease-out;}
+.canvas.heat-transition .frame::after{transition:opacity .3s ease-out;}
+.canvas.heat-transition .titem{transition:color .3s ease-out, filter .3s ease-out, text-shadow .3s ease-out;}
+.canvas.heat-transition .fname, .canvas.heat-transition .ftime{transition:color .3s ease-out;}
+/* the key: gradient bar plus labels at their heat positions, left-centered */
+.heatkey{
+  position:absolute;left:12px;top:50%;transform:translateY(-50%);z-index:20;
+  display:flex;gap:10px;align-items:stretch;height:220px;
+  opacity:0;pointer-events:none;transition:opacity .3s ease-out;
+}
+.heatkey.on{opacity:1;}
+.heatkey .bar{width:10px;border-radius:5px;box-shadow:0 0 0 1px rgba(255,255,255,.14);}
+.heatkey .ticks{position:relative;width:46px;}
+.heatkey .tick{
+  position:absolute;left:0;transform:translateY(-50%);
+  font-size:10px;line-height:1;white-space:nowrap;color:#efe4ff;
+  text-shadow:0 1px 2px rgba(0,0,0,.6);
+}
+.heatkey .tick::before{
+  content:'';position:absolute;left:-10px;top:50%;width:6px;height:1px;background:rgba(255,255,255,.45);
+}

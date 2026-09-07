@@ -1,0 +1,68 @@
+/* Selection chrome in #overlay: text underlines, the editing state, the selection box and handles, nested-frame hover boxes, the marquee, and smart-guide lines. */
+/* hover / multi-select underlines are drawn in the #overlay (.tunder), not
+   as text-decoration, so they stay a crisp 1px at any zoom */
+/* the underline never adapts to the canvas background — always the fixed
+   selection blue, same as .selbox. (The frame name's hover/selected color
+   stays on var(--accent): on a light canvas that's the same blue; on a dark
+   one it adapts for contrast, unlike the underline.) */
+.tunder{position:absolute;height:1px;background:var(--sel-blue);pointer-events:none;z-index:8;}
+/* cursor:text while editing → CustomCursor swaps to the text beam. The
+   1px border comes from the overlay (.selbox.editing). The element itself
+   has no fill: the highlight is the browser's own selection, so it behaves
+   like a normal text editor — select-all on entry, click to place a bare
+   caret (no highlight), click-drag / double-click / shift-arrows to select
+   a range. With no padding the line box and the text box coincide, so a
+   full selection fills the selection box exactly. */
+.titem[contenteditable="true"]{
+  cursor:text;user-select:text;outline:none;
+  background:transparent;
+}
+/* fixed, like --sel-blue — the text selection highlight never adapts to the
+   canvas background */
+.titem[contenteditable="true"]::selection{background:color-mix(in srgb, var(--sel-blue) 16%, transparent);}
+.titem[contenteditable="true"]::-moz-selection{background:color-mix(in srgb, var(--sel-blue) 16%, transparent);}
+
+/* Figma-style selection overlay */
+.selbox{
+  position:absolute;border:1px solid var(--sel-blue);pointer-events:none;z-index:8;
+}
+/* hover outline for a child frame (nested inside another) — it has no
+   label of its own, so hovering its own body outlines the whole frame */
+.childframe-hover{
+  position:absolute;border:1px solid var(--sel-blue);pointer-events:none;z-index:8;
+}
+/* each item inside a hovered child frame gets a dotted box */
+.childitem-hover{
+  position:absolute;border:1px dotted var(--sel-blue);pointer-events:none;z-index:8;
+}
+.selhandle{
+  position:absolute;width:7px;height:7px;background:#fff;border:1.5px solid var(--sel-blue);
+  border-radius:1px;
+}
+.selhandle.tl{left:-4px;top:-4px;} .selhandle.tr{right:-4px;top:-4px;}
+.selhandle.bl{left:-4px;bottom:-4px;} .selhandle.br{right:-4px;bottom:-4px;}
+/* a lone frame's handles are live */
+.selhandle.resizable{pointer-events:auto;}
+.selhandle.resizable.tl, .selhandle.resizable.br{cursor:nwse-resize;}
+.selhandle.resizable.tr, .selhandle.resizable.bl{cursor:nesw-resize;}
+/* edge handles: thin strips along each side, for resizing from just that side */
+.seledge{position:absolute;pointer-events:auto;}
+.seledge.t, .seledge.b{left:8px;right:8px;height:7px;cursor:ns-resize;}
+.seledge.l, .seledge.r{top:8px;bottom:8px;width:7px;cursor:ew-resize;}
+.seledge.t{top:-4px;} .seledge.b{bottom:-4px;}
+.seledge.l{left:-4px;} .seledge.r{right:-4px;}
+.selsize{
+  position:absolute;top:calc(100% + 6px);left:50%;transform:translateX(-50%);
+  background:var(--sel-blue);color:#fff;font-size:10.5px;font-weight:500;
+  padding:2px 7px;border-radius:4px;white-space:nowrap;font-variant-numeric:tabular-nums;
+  user-select:none;
+}
+
+.marquee{
+  position:absolute;border:1px solid var(--accent);background:color-mix(in srgb, var(--accent) 15%, transparent);
+  pointer-events:none;z-index:9;
+}
+
+/* smart guides: a 1px line along the edge/center a drag has snapped to,
+   spanning the moving box and the layer it aligned with */
+.snapline{position:absolute;background:#f24822;pointer-events:none;z-index:9;}

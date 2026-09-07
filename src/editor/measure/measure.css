@@ -1,0 +1,12 @@
+/* Option/Alt distance measurement guides and labels. */
+/* Option/Alt distance measurement: a line per axis plus a small pill label */
+/* below .selbox (8) so a guide never crosses over the blue size badge */
+.measure{position:absolute;left:0;top:0;pointer-events:none;z-index:7;}
+.measure-line{position:absolute;background:#f24822;pointer-events:none;}
+
+.measure-label{
+  position:absolute;transform:translate(-50%,-50%);
+  background:#f24822;color:#fff;font-size:10px;font-weight:600;line-height:1;
+  padding:2px 5px;border-radius:4px;white-space:nowrap;pointer-events:none;
+  font-variant-numeric:tabular-nums;
+}
