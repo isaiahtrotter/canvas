@@ -11,6 +11,8 @@
 //   only call modules installed before it; everything else waits for an event.
 import type { EditorHooks, Fill, FrameItem, Item, TextItem, Tool } from "./types"
 import type { DrillAPI } from "../selection/drill"
+import type { CanvasAPI } from "../canvas/render"
+import type { LayoutAPI } from "../canvas/layout"
 import type { ToolsAPI } from "../tools/tools"
 import type { SettingsAPI } from "../settings/settings"
 import type { TimesAPI } from "../times/times"
@@ -57,6 +59,8 @@ export interface UiState {
     lastHover: HTMLElement | null // measure / layers → the layer node under the pointer, read by the overlay
     spaceDown: boolean // view → pointer handlers pan instead of selecting while Space is held
     enteredFrame: number | null // drill → the nested frame whose contents are directly selectable; keymap/pointerdown reset it
+    editingEl: HTMLElement | null // gestures → the contenteditable text node; render/clips/overlay/keymap leave it alone
+    hoverWash: { id: number; color: string } | null // panel (size handles) → render.applyWash tints that text
 }
 
 export interface Dom {
@@ -77,14 +81,26 @@ export type Disposable = { dispose?(): void }
 
 // Module slots. Each is filled by mountEditor when that module installs; the
 // interfaces grow as modules are extracted from engine.ts.
+export interface Snapshot {
+    items: Item[]
+    selection: number[]
+}
 export interface StoreAPI {
     touchParentFrames(): void
+    itemById(id: number): Item | undefined
     containingFrame(it: Item): FrameItem | null
     selectedItems(): Item[]
+    singleSelectedFrame(): FrameItem | null
     addItem(props: Partial<TextItem>): TextItem
     addFrame(props: Partial<FrameItem>): FrameItem
     /** a freshly drawn frame takes in the loose items that sit fully inside it */
     adoptLooseText(f: FrameItem): void
+    snapshot(): Snapshot
+    /** log an undo step — the current state, or `pre` taken before a gesture began */
+    pushHistory(pre?: Snapshot): void
+    /** the per-text signature/parent seen at the last emit; layout moves update it so they don't count as edits */
+    lastText: Map<number, { sig: string; parent: number | null }>
+    textSig(it: TextItem): string
 }
 export interface PersistAPI {
     scheduleSave(): void
@@ -115,6 +131,10 @@ export interface OverlayAPI {
 }
 export interface GesturesAPI {
     startRenaming(name: HTMLElement, it: FrameItem): void
+    startEditing(el: HTMLElement, it: TextItem): void
+}
+export interface DragAPI {
+    onItemPointerDown(e: PointerEvent, it: Item, el: HTMLElement): void
 }
 export interface FillAPI {
     applyBg(): void
@@ -147,10 +167,13 @@ export interface EditorContext {
     measure: MeasureAPI
     tools: ToolsAPI
     times: TimesAPI
+    canvas: CanvasAPI
+    layout: LayoutAPI
     layers: LayersAPI
     drill: DrillAPI
     overlay: OverlayAPI
     gestures: GesturesAPI
+    drag: DragAPI
     panel: PanelAPI
     settings: SettingsAPI
 }
@@ -181,7 +204,7 @@ export function createContext(root: HTMLElement, hooks: EditorHooks): EditorCont
             view: { x: 0, y: 0, z: 1 },
         },
         flags: { restoring: false, carryingFrameDrag: false, suppressLeaveBump: false, skipTouch: false },
-        ui: { tool: "move", settingsOpen: false, heat: false, lastHover: null, spaceDown: false, enteredFrame: null },
+        ui: { tool: "move", settingsOpen: false, heat: false, lastHover: null, spaceDown: false, enteredFrame: null, editingEl: null, hoverWash: null },
         prefs: loadPrefs(),
         bus: {
             subscribe(fn) {

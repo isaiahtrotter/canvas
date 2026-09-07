@@ -37,6 +37,8 @@ import { installView } from "./view/view"
 import { createGeometry } from "./core/geometry"
 import { installDrill } from "./selection/drill"
 import { seedDemoText, centerDefaultItems, seedDemoFrame } from "./demo"
+import { installCanvas } from "./canvas/render"
+import { installLayout, DEFAULT_LAYOUT } from "./canvas/layout"
 // the host-facing types keep their import path
 export type { FrameLayout, FrameItem, Fill, FillMode, EditorHooks, EditorAPI } from "./core/types"
 
@@ -56,12 +58,28 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
     const selection = ctx.doc.selection
     const view = ctx.doc.view
     // module slots not yet extracted from this closure: publish the closure's own functions
-    ctx.store = { touchParentFrames, containingFrame, selectedItems, addItem, addFrame, adoptLooseText }
+    ctx.store = {
+        touchParentFrames,
+        itemById,
+        containingFrame,
+        selectedItems,
+        singleSelectedFrame,
+        addItem,
+        addFrame,
+        adoptLooseText,
+        snapshot,
+        pushHistory,
+        get lastText() {
+            return lastText // a const declared further down; read lazily
+        },
+        textSig,
+    }
     ctx.persist = { scheduleSave }
     ctx.geo = createGeometry(ctx)
     const { nodeSize, boundsOf, selectionBounds, itemBounds, rectContains, frameEnclosing, frameAt, visibleRect } = ctx.geo
     ctx.overlay = { renderUnderlines, renderSelectionOverlay }
-    ctx.gestures = { startRenaming }
+    ctx.gestures = { startRenaming, startEditing }
+    ctx.drag = { onItemPointerDown }
     ctx.panel = { fill: { applyBg, updateFill } }
 
     /* ================= ported app ================= */
@@ -324,8 +342,6 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
     // instead of inside the scaled #world — so a 1px border is 1px at any
     // zoom, with no counter-scaling and no blurry fractional strokes.
     const { app, canvas, world, overlay } = ctx.dom
-    let editingEl = null
-    let hoverWash = null // {id, color} — set while a slider handle is hovered/dragged
 
     /* ---- view: pan + zoom + pixel grid: view/view.ts ---- */
     use("view", installView(ctx))
@@ -344,409 +360,15 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
     /* ---- frame timestamps + heatmap: times/times.ts ---- */
     use("times", installTimes(ctx))
 
-    function hexToRgba(hex, a) {
-        const n = parseInt(hex.slice(1), 16)
-        return (
-            "rgba(" +
-            ((n >> 16) & 255) +
-            "," +
-            ((n >> 8) & 255) +
-            "," +
-            (n & 255) +
-            "," +
-            a +
-            ")"
-        )
-    }
-    function applyWash() {
-        // text only — a frame's background is its fill
-        items.filter(isText).forEach((it) => {
-            const node = ctx.nodeFor(it.id)
-            if (!node) return
-            node.style.background =
-                hoverWash && hoverWash.id === it.id
-                    ? hexToRgba(hoverWash.color, 0.15)
-                    : ""
-        })
-    }
+    /* ---- canvas rendering + labels: canvas/render.ts; smart layout + clipping: canvas/layout.ts ---- */
+    use("canvas", installCanvas(ctx))
+    use("layout", installLayout(ctx))
+    const { renderCanvas, relayoutLive, applyWash, renderFrameLabels, placeLabel, labelLayer } = ctx.canvas
+    const { applyClips, setLayout, wrapSelectionInLayout, toggleLayout } = ctx.layout
 
-    /* The canvas DOM is reconciled in place, keyed by item id, rather than
-       rebuilt on every change. Rebuilding restarted every CSS animation and
-       dropped every in-flight transition on every layer (in the heatmap,
-       everything blinked whenever anything changed) and tore down the node
-       being edited. Now an unchanged layer's node is left exactly as it is;
-       only the properties that actually changed are written, so only the
-       affected layers transition. Handlers look their item up by id at event
-       time, since undo/redo replaces the item objects. */
+    // handlers look their item up by id at event time, since undo/redo replaces the item objects
     function itemById(id: number): Item | undefined {
         return items.find((i) => i.id === id)
-    }
-    function createTextNode(id: number) {
-        const el = document.createElement("div")
-        el.className = "titem"
-        el.dataset.id = String(id)
-        el.addEventListener("pointerdown", (e) => {
-            const it = itemById(id)
-            if (it) onItemPointerDown(e, it, el)
-        })
-        el.addEventListener("dblclick", (e) => {
-            e.stopPropagation()
-            // already editing: this is a native double-click-to-select-word,
-            // not a request to start over (which would re-select everything)
-            if (el.getAttribute("contenteditable") === "true") return
-            const it = itemById(id)
-            if (!it || !isText(it)) return
-            if (!drillInto(it)) startEditing(el, it) // one level deeper, or edit once there's nowhere deeper
-        })
-        return el
-    }
-    function createFrameNode(id: number) {
-        const el = document.createElement("div")
-        el.className = "frame"
-        el.dataset.id = String(id)
-        // the name/timestamp label lives in the screen-space overlay (see
-        // renderFrameLabels), not in here. A top-level frame is grabbed by
-        // that label; an empty one also from anywhere inside it, but one
-        // holding text keeps its body as empty canvas so a marquee can start
-        // there. A child frame (nested inside another) has no label to grab
-        // by at all — it shows none — so its body always selects it,
-        // whether or not it holds text.
-        el.addEventListener("pointerdown", (e) => {
-            if (e.target !== el) return
-            const it = itemById(id)
-            if (!it || !isFrame(it)) return
-            // "contents" means anything parented to it — text or a nested
-            // frame — not just text; a top-level frame holding only a child
-            // frame must be just as ungrabbable from its body
-            const hasContents = items.some((c) => c.id !== id && c.parent === id)
-            if (hasContents && !containingFrame(it)) return
-            onItemPointerDown(e, it, el)
-        })
-        el.addEventListener("dblclick", (e) => {
-            if (e.target !== el) return
-            const it = itemById(id)
-            if (it && drillInto(it)) e.stopPropagation()
-        })
-        return el
-    }
-    /* Frame labels (name + timestamp) are drawn in #overlay at exact screen
-       coordinates, like the selection box — not inside the zoomed #world
-       with a counter-scale. Nesting scale(1/z) inside scale(z) made Chromium
-       rasterize the text a few pixels off its layout position, drifting with
-       zoom (measured: −4px at 1160%, then +8px from 1400% on, so the label
-       sat on the frame's edge). In screen space there is no transform to get
-       wrong. Reconciled in place by frame id so a label being renamed, and
-       any color transition, survives a re-render. */
-    const labelLayer = document.createElement("div")
-    labelLayer.className = "labels"
-    overlay.appendChild(labelLayer)
-    const LABEL_GAP = 6 // screen px between the label's bottom and the frame's top
-    function placeLabel(el: HTMLElement, x: number, y: number, w: number) {
-        const p = toScreen(x, y)
-        el.style.left = Math.round(p.x) + "px"
-        el.style.top = Math.round(p.y) - LABEL_GAP + "px"
-        el.style.maxWidth = Math.max(0, Math.round(w * view.z)) + "px" // never wider than the frame
-    }
-    function createLabel(id: number) {
-        const label = document.createElement("div")
-        label.className = "flabel"
-        label.dataset.id = String(id)
-        const name = document.createElement("span")
-        name.className = "fname"
-        const time = document.createElement("span")
-        time.className = "ftime"
-        label.append(name, time)
-        label.addEventListener("pointerdown", (e) => {
-            const it = itemById(id)
-            const node = ctx.nodeFor(id)
-            if (it && node) onItemPointerDown(e, it, node)
-        })
-        name.addEventListener("dblclick", (e) => {
-            e.stopPropagation()
-            const it = itemById(id)
-            if (it && isFrame(it)) startRenaming(name, it)
-        })
-        return label
-    }
-    function renderFrameLabels() {
-        const frames = items.filter(isFrame)
-        // a frame nested inside another frame is that frame's child — it
-        // shows no name or timestamp of its own, same as it gets no
-        // selection handles of its own when it's the lone selection
-        const topLevel = new Set(frames.filter((f) => !containingFrame(f)).map((f) => f.id))
-        Array.from(labelLayer.children).forEach((n) => {
-            const idAttr = (n as HTMLElement).dataset.id
-            if (idAttr !== undefined && !topLevel.has(Number(idAttr))) n.remove()
-        })
-        frames.forEach((f) => {
-            if (!topLevel.has(f.id)) return
-            let el = labelLayer.querySelector<HTMLElement>('[data-id="' + f.id + '"]')
-            if (!el) {
-                el = createLabel(f.id)
-                labelLayer.appendChild(el)
-            }
-            el.classList.toggle("selected", selection.has(f.id))
-            const name = el.querySelector<HTMLElement>(".fname")
-            const time = el.querySelector<HTMLElement>(".ftime")
-            if (name && name.getAttribute("contenteditable") !== "true" && name.textContent !== f.name)
-                name.textContent = f.name
-            if (time && time.dataset.t !== String(f.updatedAt)) {
-                time.dataset.t = String(f.updatedAt)
-                time.textContent = relTime(f.updatedAt)
-                time.title = absTime(f.updatedAt)
-            }
-            placeLabel(el, f.x, f.y, f.w)
-        })
-    }
-    // write a style only when it differs — an identical write is harmless
-    // to layout but would still be noise, and this keeps intent clear
-    function setStyle(el: HTMLElement, prop: string, value: string) {
-        if (el.style.getPropertyValue(prop) !== value) el.style.setProperty(prop, value)
-    }
-    function updateTextNode(el: HTMLElement, it: TextItem, multi: boolean) {
-        el.classList.toggle("sel-underline", multi && selection.has(it.id))
-        setStyle(el, "left", it.x + "px")
-        setStyle(el, "top", it.y + "px")
-        setStyle(el, "font-size", it.size + "px")
-        setStyle(el, "font-family", it.font)
-        setStyle(el, "font-weight", String(it.weight))
-        setStyle(el, "line-height", String(lineHeightOf(it)))
-        setStyle(el, "letter-spacing", letterSpacingOf(it) + "px")
-        setStyle(el, "opacity", String((it.opacity != null ? it.opacity : 100) / 100))
-        setStyle(el, "color", rgbaCss(it.fill, it.alpha))
-        // the node being edited owns its own text until it commits
-        if (el !== editingEl && el.textContent !== it.text) el.textContent = it.text
-    }
-    function updateFrameNode(el: HTMLElement, it: FrameItem) {
-        el.classList.toggle("selected", selection.has(it.id))
-        setStyle(el, "left", it.x + "px")
-        setStyle(el, "top", it.y + "px")
-        setStyle(el, "width", it.w + "px")
-        setStyle(el, "height", it.h + "px")
-        setStyle(el, "background", rgbaCss(it.fill, it.alpha))
-    }
-    function renderCanvas() {
-        const multi = selection.size > 1
-        // frames sit under text
-        const ordered = [...items.filter(isFrame), ...items.filter(isText)]
-        const live = new Set(ordered.map((it) => it.id))
-        // drop nodes whose item is gone (leave anything without an id, like a frame draft)
-        Array.from(world.children).forEach((n) => {
-            const idAttr = (n as HTMLElement).dataset.id
-            if (idAttr !== undefined && !live.has(Number(idAttr))) n.remove()
-        })
-        // walk the expected order; a node is only moved when it's out of place
-        let cursor: ChildNode | null = world.firstChild
-        ordered.forEach((it) => {
-            const want = isFrame(it) ? "frame" : "titem"
-            let el = world.querySelector<HTMLElement>(':scope > [data-id="' + it.id + '"]')
-            if (el && !el.classList.contains(want)) {
-                el.remove()
-                el = null
-            }
-            if (!el) el = isFrame(it) ? createFrameNode(it.id) : createTextNode(it.id)
-            if (el === cursor) cursor = cursor.nextSibling
-            else world.insertBefore(el, cursor)
-            if (isFrame(it)) updateFrameNode(el, it)
-            else updateTextNode(el, it as TextItem, multi)
-        })
-        // smart layouts need the fresh nodes' measurements; they may move
-        // children and resize hugging frames, so write those nodes again
-        relayoutLive()
-        applyWash()
-        applyClips()
-        if (ctx.ui.heat) ctx.times.applyHeat()
-        renderSelectionOverlay()
-        ctx.minimap.update()
-        ctx.layers.renderLayers()
-    }
-
-    // run the layout engine against the current nodes and write back whatever
-    // moved or resized. Used by renderCanvas() and, so hugging frames follow
-    // their contents in real time, on every keystroke while editing text.
-    function relayoutLive() {
-        if (!applyLayouts()) return
-        const multi = selection.size > 1
-        items.forEach((it) => {
-            const el = world.querySelector<HTMLElement>(':scope > [data-id="' + it.id + '"]')
-            if (!el) return
-            if (isFrame(it)) updateFrameNode(el, it)
-            else updateTextNode(el, it as TextItem, multi)
-        })
-        applyClips()
-    }
-    // Text is measured from the DOM, so a layout computed before a web font
-    // has finished loading used the fallback font's metrics — a hugging
-    // frame could sit narrower than the text that arrived a moment later.
-    // Re-run once the fonts are in (and whenever more load later).
-    const onFontsLoaded = () => {
-        relayoutLive()
-        renderSelectionOverlay()
-        scheduleSave()
-    }
-    if (typeof document !== "undefined" && document.fonts) {
-        document.fonts.ready.then(onFontsLoaded)
-        document.fonts.addEventListener("loadingdone", onFontsLoaded)
-    }
-    /* ---- smart layout engine ----
-       For every frame with a layout: its text children are ordered by where
-       they currently sit along the main axis (so dragging one to a new spot
-       and releasing reorders it), then stacked from the padding edge with
-       the gap between them, aligned on the cross axis. A hugging frame takes
-       the size of that stack. Runs inside renderCanvas() once the nodes are
-       current, since text sizes come from the DOM. Positions written here are
-       layout, not edits, so the timestamp baseline is updated to match and
-       nothing lights up because of them. Returns whether anything changed. */
-    const DEFAULT_LAYOUT: FrameLayout = { direction: "vertical", gap: 12, padding: 24, align: "start", sizing: "hug" }
-    function applyLayouts(): boolean {
-        let changed = false
-        items.filter(isFrame).forEach((f) => {
-            const L = f.layout
-            if (!L) return
-            const kids = items.filter((t): t is TextItem => isText(t) && t.parent === f.id)
-            const vertical = L.direction === "vertical"
-            const sized = kids.map((k) => ({ k, ...nodeSize(k) }))
-            sized.sort((a, b) => (vertical ? a.k.y - b.k.y : a.k.x - b.k.x) || a.k.id - b.k.id)
-            const mainOf = (s: { w: number; h: number }) => (vertical ? s.h : s.w)
-            const crossOf = (s: { w: number; h: number }) => (vertical ? s.w : s.h)
-            const mainTotal = sized.reduce((sum, s) => sum + mainOf(s), 0) + L.gap * Math.max(0, sized.length - 1)
-            const crossMax = sized.reduce((m, s) => Math.max(m, crossOf(s)), 0)
-            if (L.sizing === "hug") {
-                // exact, not rounded: content sizes are fractional, and a hug
-                // that's off by any fraction leaves either the content poking
-                // out or a sliver of frame past the last item
-                const w = Math.max(1, (vertical ? crossMax : mainTotal) + L.padding * 2)
-                const h = Math.max(1, (vertical ? mainTotal : crossMax) + L.padding * 2)
-                if (w !== f.w || h !== f.h) {
-                    f.w = w
-                    f.h = h
-                    changed = true
-                }
-            }
-            const innerCross = (vertical ? f.w : f.h) - L.padding * 2
-            let cursor = L.padding
-            sized.forEach((s) => {
-                const cross = crossOf(s)
-                const off = L.align === "start" ? 0 : L.align === "center" ? (innerCross - cross) / 2 : innerCross - cross
-                // exact, not rounded: text heights are fractional (size × line
-                // height), so rounding each child's position onto the grid left
-                // up to half a unit between neighbours even at gap 0
-                const x = vertical ? f.x + L.padding + off : f.x + cursor
-                const y = vertical ? f.y + cursor : f.y + L.padding + off
-                if (x !== s.k.x || y !== s.k.y) {
-                    s.k.x = x
-                    s.k.y = y
-                    changed = true
-                    // a layout move isn't an edit: keep the timestamp baseline in step
-                    lastText.set(s.k.id, { sig: textSig(s.k), parent: s.k.parent ?? null })
-                }
-                cursor += mainOf(s) + L.gap
-            })
-        })
-        return changed
-    }
-    function setLayout(f: FrameItem, layout: FrameLayout | null) {
-        pushHistory()
-        f.layout = layout
-        f.updatedAt = Date.now()
-        emit()
-    }
-    /* Selected text (one or more, no frames) gets wrapped in a new frame that
-       has a layout, like Figma's "add auto layout" on a selection. Direction
-       and gap are inferred from how the items already sit — spread more
-       sideways than downward reads as a row, and the average clear space
-       between neighbours becomes the gap — so the frame closes around them
-       without visibly rearranging anything. Returns false if the selection
-       isn't wrappable (empty, or includes a frame). */
-    function wrapSelectionInLayout(): boolean {
-        const sel = selectedItems()
-        const texts = sel.filter(isText)
-        if (!texts.length || texts.length !== sel.length) return false
-        const b = boundsOf(texts)
-        if (!b) return false
-        const sizes = new Map(texts.map((t) => [t.id, nodeSize(t)]))
-        const cx = texts.map((t) => t.x + sizes.get(t.id).w / 2)
-        const cy = texts.map((t) => t.y + sizes.get(t.id).h / 2)
-        const spread = (v: number[]) => Math.max(...v) - Math.min(...v)
-        const direction: FrameLayout["direction"] = spread(cx) > spread(cy) ? "horizontal" : "vertical"
-        const vertical = direction === "vertical"
-        const sorted = [...texts].sort((a, b2) => (vertical ? a.y - b2.y : a.x - b2.x))
-        const gaps: number[] = []
-        for (let i = 1; i < sorted.length; i++) {
-            const prev = sorted[i - 1],
-                next = sorted[i]
-            const prevEnd = vertical ? prev.y + sizes.get(prev.id).h : prev.x + sizes.get(prev.id).w
-            gaps.push((vertical ? next.y : next.x) - prevEnd)
-        }
-        const gap = gaps.length ? Math.max(0, Math.round(gaps.reduce((s, g) => s + g, 0) / gaps.length)) : DEFAULT_LAYOUT.gap
-        const padding = DEFAULT_LAYOUT.padding
-        pushHistory()
-        const f = addFrame({
-            x: Math.round(b.x - padding),
-            y: Math.round(b.y - padding),
-            w: Math.round(b.w + padding * 2),
-            h: Math.round(b.h + padding * 2),
-            layout: { ...DEFAULT_LAYOUT, direction, gap, padding },
-        })
-        // the new frame takes the texts' place in the tree, if they shared one
-        const parents = new Set(texts.map((t) => t.parent ?? null))
-        f.parent = parents.size === 1 ? [...parents][0] : null
-        texts.forEach((t) => (t.parent = f.id))
-        selection.clear()
-        selection.add(f.id)
-        emit()
-        return true
-    }
-    // Shift+A: add a smart layout to the selected frame (or remove the one it
-    // has); with text selected, wrap it in a new layout frame
-    function toggleLayout() {
-        const f = singleSelectedFrame()
-        if (f) {
-            setLayout(f, f.layout ? null : { ...DEFAULT_LAYOUT })
-            ctx.tools.showToast(f.layout ? "Smart layout added" : "Smart layout removed")
-            return
-        }
-        if (wrapSelectionInLayout()) ctx.tools.showToast("Smart layout added")
-    }
-
-    /* Text belongs to the frame recorded in its `parent` (set by where the
-       pointer is when it's dropped, or by the frame drawn around it), so a
-       line that runs past the frame's edge still belongs to it and the part
-       poking out is clipped. Frames nest only when fully contained. */
-    // clip every text layer to the frame it belongs to; text being edited is
-    // left unclipped so the caret and what's typed stay visible
-    function applyClips() {
-        items.forEach((it) => {
-            const node = ctx.nodeFor(it.id)
-            if (!node) return
-            // A node holding a clip-path — even one that's the empty string,
-            // just from having had one before — appears to get promoted to
-            // its own compositing layer in at least some browsers, and
-            // repositioning that layer via raw style.left/top on every
-            // pointermove (not a transform the compositor can interpolate)
-            // can make its paint region briefly lag behind the new position,
-            // clipping content right at the layer's edge for a frame or two —
-            // on text, that reads as the descenders flickering off. Standalone
-            // text never has a clip-path at all, so it never hits this; text
-            // in a frame does, which matches: it only happens there, and only
-            // while actually moving. Suspending the clip for the duration of
-            // the drag sidesteps it; applyClips() reinstates the real one the
-            // moment the drag ends and the layer settles.
-            if (node === editingEl || node.classList.contains("dragging") || !containingFrame(it)) {
-                node.style.clipPath = ""
-                return
-            }
-            const { w, h } = nodeSize(it)
-            const vis = visibleRect(it, w, h)
-            const top = vis.y - it.y,
-                left = vis.x - it.x,
-                right = it.x + w - (vis.x + vis.w),
-                bottom = it.y + h - (vis.y + vis.h)
-            node.style.clipPath =
-                top > 0 || left > 0 || right > 0 || bottom > 0
-                    ? `inset(${Math.max(0, top)}px ${Math.max(0, right)}px ${Math.max(0, bottom)}px ${Math.max(0, left)}px)`
-                    : ""
-        })
     }
 
     /* ---- layers panel (parked): layers/layers.ts ---- */
@@ -797,7 +419,7 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
         const hoverTarget = hoveredItem ? selectTargetFor(hoveredItem) : null
         items.filter(isText).forEach((it) => {
             const node = ctx.nodeFor(it.id)
-            if (!node || node === editingEl) return
+            if (!node || node === ctx.ui.editingEl) return
             if (!(node.classList.contains("sel-underline") || hoverTarget === it)) return
             let { w, h } = nodeSize(it)
             if (!w) return
@@ -954,9 +576,9 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
         canvas.querySelectorAll<HTMLElement>(".selbox").forEach((n) => n.remove())
         renderFrameLabels()
         renderUnderlines()
-        if (editingEl) {
+        if (ctx.ui.editingEl) {
             // while typing: the same 1px box, sized to the live text, no handles
-            const it = items.find((i) => i.id === Number(editingEl.dataset.id))
+            const it = items.find((i) => i.id === Number(ctx.ui.editingEl.dataset.id))
             if (!it) return
             const box = document.createElement("div")
             box.className = "selbox editing"
@@ -1071,7 +693,7 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
     }
 
     function startEditing(el, it) {
-        editingEl = el
+        ctx.ui.editingEl = el
         el.style.clipPath = "" // see everything while typing; clipped again on commit
         renderSelectionOverlay()
         const preEdit = snapshot()
@@ -1090,7 +712,7 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
             if (newText !== it.text) pushHistory(preEdit)
             it.text = newText
             el.removeEventListener("blur", done)
-            editingEl = null
+            ctx.ui.editingEl = null
             emit()
         }
         el.addEventListener("blur", done)
@@ -1507,7 +1129,7 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
         // clicking away from text being edited: drop the selection now, before
         // the blur commits the edit — otherwise the regular selection box (with
         // handles) flashes for the span between mousedown and mouseup
-        if (editingEl && selection.size) selection.clear()
+        if (ctx.ui.editingEl && selection.size) selection.clear()
         ctx.ui.enteredFrame = null // empty canvas: back to the top level
         const rect = canvas.getBoundingClientRect()
         const s = toWorld(e.clientX, e.clientY)
@@ -1618,7 +1240,7 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
         const a = document.activeElement as HTMLElement | null
         // an active text edit counts as typing even if focus is elsewhere
         const typing =
-            !!editingEl ||
+            !!ctx.ui.editingEl ||
             (a &&
                 (a.tagName === "INPUT" ||
                     a.tagName === "SELECT" ||
@@ -2536,7 +2158,7 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
             } else pushHistory()
         },
         highlight(id, color) {
-            hoverWash = color ? { id, color } : null
+            ctx.ui.hoverWash = color ? { id, color } : null
             applyWash()
         },
         list() {
@@ -3223,7 +2845,6 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
         clearTimeout(nudgeTimer)
         clearTimeout(saveTimer)
         window.removeEventListener("pagehide", onPageHide)
-        document.fonts?.removeEventListener("loadingdone", onFontsLoaded)
         for (let i = disposers.length - 1; i >= 0; i--) disposers[i]()
         root.innerHTML = ""
     }
