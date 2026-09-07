@@ -15,6 +15,7 @@ import type { CanvasAPI } from "../canvas/render"
 import type { LayoutAPI } from "../canvas/layout"
 import type { OverlayAPI } from "../selection/overlay"
 import type { SnapAPI } from "../selection/snap"
+import type { GesturesAPI } from "../interactions/itemGestures"
 import type { ToolsAPI } from "../tools/tools"
 import type { SettingsAPI } from "../settings/settings"
 import type { TimesAPI } from "../times/times"
@@ -128,12 +129,6 @@ export interface GeometryAPI {
     /** position an #overlay element over a world rect, snapped to whole pixels */
     placeScreenRect(el: HTMLElement, r: Rect): void
 }
-export interface GesturesAPI {
-    startRenaming(name: HTMLElement, it: FrameItem): void
-    startEditing(el: HTMLElement, it: TextItem): void
-    /** drag a selection-box corner ("tl".."br") or edge ("t","r","b","l") to resize a lone frame */
-    startResize(e: PointerEvent, it: FrameItem, corner: string): void
-}
 export interface DragAPI {
     onItemPointerDown(e: PointerEvent, it: Item, el: HTMLElement): void
 }
@@ -143,6 +138,8 @@ export interface FillAPI {
 }
 export interface PanelAPI {
     fill: FillAPI
+    /** refresh the X/Y/W/H fields from the selection */
+    updateProps(): void
 }
 
 export interface EditorContext {
