@@ -12,6 +12,7 @@
 import type { EditorHooks, Fill, Item, Tool } from "./types"
 import type { ToolsAPI } from "../tools/tools"
 import type { SettingsAPI } from "../settings/settings"
+import type { TimesAPI } from "../times/times"
 import { type Prefs, loadPrefs } from "../settings/prefs"
 
 export interface Doc {
@@ -40,6 +41,7 @@ export interface TouchFlags {
 export interface UiState {
     tool: Tool // tools → read by pointer handlers and the keymap
     settingsOpen: boolean // settings → both keydown handlers bail while the dialog is up
+    heat: boolean // times → renderCanvas re-applies heat colors; fill.applyBg picks the thermal palette
 }
 
 export interface Dom {
@@ -69,9 +71,6 @@ export interface PersistAPI {
 export interface ViewAPI {
     applyGrid(): void
     resetView(): void
-}
-export interface TimesAPI {
-    setShowTimes(on: boolean, toast?: boolean): void
 }
 export interface FillAPI {
     applyBg(): void
@@ -131,7 +130,7 @@ export function createContext(root: HTMLElement, hooks: EditorHooks): EditorCont
             view: { x: 0, y: 0, z: 1 },
         },
         flags: { restoring: false, carryingFrameDrag: false, suppressLeaveBump: false, skipTouch: false },
-        ui: { tool: "move", settingsOpen: false },
+        ui: { tool: "move", settingsOpen: false, heat: false },
         prefs: loadPrefs(),
         bus: {
             subscribe(fn) {

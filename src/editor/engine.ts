@@ -29,6 +29,7 @@ import {
 import { createContext, CANVAS_DEFAULT, type EditorContext, type Disposable } from "./core/context"
 import { installTools } from "./tools/tools"
 import { installSettings } from "./settings/settings"
+import { installTimes, HEAT_BG } from "./times/times"
 // the host-facing types keep their import path
 export type { FrameLayout, FrameItem, Fill, FillMode, EditorHooks, EditorAPI } from "./core/types"
 
@@ -51,7 +52,6 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
     ctx.store = { touchParentFrames }
     ctx.persist = { scheduleSave }
     ctx.view = { applyGrid, resetView }
-    ctx.times = { setShowTimes }
     ctx.panel = { fill: { applyBg, updateFill } }
 
     /* ================= ported app ================= */
@@ -775,137 +775,8 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
     /* ---- tools + toast: tools/tools.ts ---- */
     use("tools", installTools(ctx))
 
-    /* ---- frame timestamps: shown beside the name; Shift+T toggles, and
-       the choice sticks in localStorage ---- */
-    const TIMES_KEY = "canvas.showTimestamps"
-    let showTimes = true
-    try {
-        showTimes = localStorage.getItem(TIMES_KEY) !== "0"
-    } catch (_) {
-        /* storage unavailable — default to shown */
-    }
-    function applyShowTimes() {
-        app.classList.toggle("hide-times", !showTimes)
-        const sw = root.querySelector<HTMLInputElement>("#prefTimes")
-        if (sw) sw.checked = showTimes
-    }
-    function setShowTimes(v: boolean, toast = true) {
-        if (v === showTimes) return
-        showTimes = v
-        try {
-            localStorage.setItem(TIMES_KEY, showTimes ? "1" : "0")
-        } catch (_) {
-            /* ignore */
-        }
-        applyShowTimes()
-        if (toast) ctx.tools.showToast(showTimes ? "Timestamps shown" : "Timestamps hidden")
-    }
-    function toggleTimes() {
-        setShowTimes(!showTimes)
-    }
-    applyShowTimes()
-    function refreshTimes() {
-        canvas.querySelectorAll<HTMLElement>(".ftime").forEach((t) => {
-            t.textContent = relTime(Number(t.dataset.t))
-        })
-    }
-    const timesTimer = setInterval(refreshTimes, 30000)
-
-    /* ---- heatmap (Shift+H): thermal view of how recently each layer was
-       edited. Heat decays on a log scale over a week — just-edited layers
-       glow light yellow, untouched ones sink to dark purple. Only the canvas
-       changes: the frame/text colors are overridden through CSS variables
-       set per node (--heat / --heat-frame), the world gets a slight blur, and
-       a key appears on the left. Toggling fades over 300ms via a temporary
-       .heat-transition class so the transition never applies to ordinary
-       fill edits. ---- */
-    let heat = false
-    let heatTransTimer = null
-    const HEAT_BG = "#0a0218"
-    const HEAT_STOPS: [number, number, number][] = [
-        [0x1a, 0x05, 0x33], // dark purple — untouched
-        [0x4a, 0x0f, 0x7a],
-        [0xa3, 0x21, 0x6e],
-        [0xef, 0x72, 0x33],
-        [0xfb, 0xea, 0x6a], // light yellow — just edited
-    ]
-    const HEAT_WINDOW_S = 7 * 86400 // a week and beyond is fully cold
-    const HEAT_KEY: Array<[string, number]> = [
-        ["Now", 0],
-        ["10 min", 600],
-        ["1 hr", 3600],
-        ["1 day", 86400],
-        ["1 wk+", HEAT_WINDOW_S],
-    ]
-    function heatFromAge(ageSeconds: number) {
-        const a = Math.max(0, ageSeconds)
-        return 1 - Math.min(1, Math.log10(1 + a / 10) / Math.log10(1 + HEAT_WINDOW_S / 10))
-    }
-    function heatColor(h: number): [number, number, number] {
-        const t = Math.max(0, Math.min(1, h)) * (HEAT_STOPS.length - 1)
-        const i = Math.min(HEAT_STOPS.length - 2, Math.floor(t))
-        const f = t - i
-        const a = HEAT_STOPS[i],
-            b = HEAT_STOPS[i + 1]
-        return [0, 1, 2].map((k) => Math.round(a[k] + (b[k] - a[k]) * f)) as [number, number, number]
-    }
-    const rgbCss = (c: [number, number, number]) => `rgb(${c[0]},${c[1]},${c[2]})`
-    let heatTimer = null // 1s refresh while on; the CSS transition smooths each step
-    function applyHeat() {
-        const now = Date.now()
-        items.forEach((it) => {
-            const node = ctx.nodeFor(it.id)
-            if (!node) return
-            // stagger the glow so frames don't all breathe together
-            node.style.setProperty("--phase", ((it.id * 0.37) % 1).toFixed(3))
-            const c = heatColor(heatFromAge((now - (it.updatedAt ?? 0)) / 1000))
-            // frames and text both take the full heat color, so a fresh edit is
-            // the key's bright yellow; text stays legible on a same-heat frame
-            // through its dark text-shadow edge and the frame's moving sheen
-            node.style.setProperty(isFrame(it) ? "--heat-frame" : "--heat", rgbCss(c))
-        })
-    }
-    // the key: a gradient bar with labels placed at their heat positions
-    const heatKey = document.createElement("div")
-    heatKey.className = "heatkey"
-    heatKey.setAttribute("aria-hidden", "true")
-    const heatBar = document.createElement("div")
-    heatBar.className = "bar"
-    heatBar.style.background =
-        "linear-gradient(to bottom, " +
-        HEAT_STOPS.slice()
-            .reverse()
-            .map((c, i) => `${rgbCss(c)} ${(i / (HEAT_STOPS.length - 1)) * 100}%`)
-            .join(", ") +
-        ")"
-    const heatTicks = document.createElement("div")
-    heatTicks.className = "ticks"
-    HEAT_KEY.forEach(([label, age]) => {
-        const t = document.createElement("div")
-        t.className = "tick"
-        t.textContent = label
-        t.style.top = (1 - heatFromAge(age)) * 100 + "%"
-        heatTicks.appendChild(t)
-    })
-    heatKey.append(heatBar, heatTicks)
-    canvas.parentElement?.appendChild(heatKey)
-    function setHeat(on: boolean) {
-        if (heat === on) return
-        heat = on
-        if (on) applyHeat() // colors are in place before the class reveals them
-        canvas.classList.add("heat-transition")
-        canvas.classList.toggle("heat", on)
-        heatKey.classList.toggle("on", on)
-        applyBg() // canvas background + label colors for the thermal look
-        clearTimeout(heatTransTimer)
-        heatTransTimer = setTimeout(() => canvas.classList.remove("heat-transition"), 350)
-        clearInterval(heatTimer)
-        if (on) heatTimer = setInterval(applyHeat, 1000)
-        ctx.tools.showToast(on ? "Heatmap on" : "Heatmap off")
-    }
-    function toggleHeat() {
-        setHeat(!heat)
-    }
+    /* ---- frame timestamps + heatmap: times/times.ts ---- */
+    use("times", installTimes(ctx))
 
     function hexToRgba(hex, a) {
         const n = parseInt(hex.slice(1), 16)
@@ -1118,7 +989,7 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
         relayoutLive()
         applyWash()
         applyClips()
-        if (heat) applyHeat()
+        if (ctx.ui.heat) ctx.times.applyHeat()
         renderSelectionOverlay()
         updateMinimap()
         renderLayers()
@@ -2442,12 +2313,12 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
         if (typing || mod) return
         if (e.shiftKey && (e.key === "T" || e.key === "t")) {
             e.preventDefault()
-            toggleTimes()
+            ctx.times.toggleTimes()
             return
         }
         if (e.shiftKey && (e.key === "H" || e.key === "h")) {
             e.preventDefault()
-            toggleHeat()
+            ctx.times.toggleHeat()
             return
         }
         if (e.shiftKey && (e.key === "A" || e.key === "a")) {
@@ -3003,7 +2874,7 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
         return canvasIsDark(seen) ? LABEL_PALETTES.pale : LABEL_PALETTES.dark
     }
     function applyBg() {
-        if (heat) {
+        if (ctx.ui.heat) {
             // thermal view: near-black purple ground, light labels
             canvas.style.backgroundColor = HEAT_BG
             canvas.style.setProperty("--fname", "#efe4ff")
@@ -4005,9 +3876,6 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
     const destroy = () => {
         ctx.disposeDocListeners()
         window.removeEventListener("blur", onWindowBlur)
-        clearInterval(timesTimer)
-        clearInterval(heatTimer)
-        clearTimeout(heatTransTimer)
         clearTimeout(nudgeTimer)
         clearTimeout(saveTimer)
         window.removeEventListener("pagehide", onPageHide)
