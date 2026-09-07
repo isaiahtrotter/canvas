@@ -7,7 +7,12 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "typecheck": "tsc"
+    "typecheck": "tsc",
+    "probe": "node scripts/probe.mjs",
+    "probe:baseline": "node scripts/probe.mjs --label baseline",
+    "probe:preview": "node scripts/probe.mjs --preview",
+    "check": "npm run build && npm run probe",
+    "probe:preview:baseline": "node scripts/probe.mjs --preview --label baseline"
   },
   "dependencies": {
     "lucide-react": "^1.41.0",
@@ -18,6 +23,7 @@
     "@types/react": "^19.1.0",
     "@types/react-dom": "^19.1.0",
     "@vitejs/plugin-react": "^4.5.0",
+    "puppeteer-core": "^24.43.1",
     "typescript": "^5.8.0",
     "vite": "^6.3.0"
   },

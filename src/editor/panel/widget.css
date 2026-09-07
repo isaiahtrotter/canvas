@@ -1,0 +1,98 @@
+/* The Versions switch and the multi-handle size widget. */
+/* floating toolbar pill: T + version switches */
+.vergroup{
+  position:relative;display:flex;gap:5px;background:var(--surface-2);border-radius:10px;padding:3px;
+}
+.vbtn{
+  position:relative;z-index:1;flex:1;
+  height:26px;border:none;border-radius:8px;background:transparent;
+  cursor:pointer;font-family:inherit;font-size:11.5px;color:var(--text);
+  display:flex;align-items:center;justify-content:center;
+  font-variant-numeric:tabular-nums;transition:color .18s;
+}
+.vbtn.active{color:#fff;font-weight:600;}
+.vind{
+  position:absolute;top:3px;height:26px;border-radius:8px;background:var(--accent);
+  transition:left .18s cubic-bezier(.3,.9,.4,1), width .18s ease;z-index:0;
+}
+
+/* ================= widget ================= */
+.w{position:relative;width:100%;}
+.flank{display:flex;align-items:stretch;gap:6px;}
+.flank .stack{flex:1;min-width:0;display:flex;flex-direction:column;position:relative;}
+
+.stepcol{display:flex;flex-direction:column;align-self:stretch;flex-shrink:0;width:28px;}
+.stepcol button{
+  flex:1;border:none;font-family:inherit;color:var(--text);cursor:pointer;line-height:1;
+  display:flex;align-items:center;justify-content:center;font-size:12px;
+  background:var(--surface-2);transition:background .12s;
+}
+.stepcol button:hover{background:var(--surface-3);}
+.stepcol button:active{transform:translateY(1px);}
+.stepcol .up{border-radius:10px 10px 0 0;border-bottom:1px solid var(--surface);}
+.stepcol .dn{border-radius:0 0 10px 10px;}
+
+.bottomrow{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:10px;}
+.pills{display:flex;flex-wrap:wrap;gap:5px;align-items:center;}
+.pill{
+  font-family:inherit;background:var(--surface);border:1px solid var(--line);
+  color:var(--text);border-radius:14px;padding:4px 9px;font-size:10.5px;
+  cursor:pointer;font-variant-numeric:tabular-nums;flex-shrink:0;
+}
+.pill:hover{border-color:var(--accent);}
+
+.track{
+  position:relative;z-index:2;background:var(--surface-2);border-radius:10px;height:56px;
+  transition:border-radius .2s ease;
+}
+.ruler{position:relative;z-index:1;overflow:hidden;background:var(--surface-2);}
+.rtick{position:absolute;width:1px;background:var(--text-4);bottom:5px;}
+.rtick.major{background:var(--text-3);height:8px;}
+.rtick.minor{height:4px;opacity:.5;}
+.rlabel{
+  position:absolute;bottom:13px;transform:translateX(-50%);font-size:9.5px;color:var(--text-3);
+  font-variant-numeric:tabular-nums;white-space:nowrap;transition:opacity .15s;
+  user-select:none;-webkit-user-select:none;pointer-events:none;
+}
+
+/* cursor:pointer here too — slider handles get the CustomCursor hand */
+.handle{
+  position:absolute;top:0;bottom:0;width:22px;transform:translateX(-50%);
+  display:flex;align-items:center;justify-content:center;
+  cursor:pointer;touch-action:none;
+  transition:left .25s cubic-bezier(.3,.9,.4,1);
+}
+.handle.dragging{transition:none;cursor:pointer;}
+.hshape{
+  display:flex;align-items:center;justify-content:center;
+  transition:background-color .25s ease, width .16s ease, height .16s ease,
+             border-radius .16s ease, transform .16s ease, filter .1s, opacity .12s ease;
+}
+.shape-bar .hshape{width:4px;height:24px;border-radius:3px;}
+.shape-bar .handle:hover .hshape, .shape-bar .handle.dragging .hshape{width:8px;height:34px;border-radius:5px;}
+.shape-diamond .hshape{width:10px;height:10px;border-radius:2px;transform:rotate(45deg);}
+
+.numtag{
+  position:absolute;left:50%;
+  font-size:9.5px;font-weight:600;color:var(--text);
+  background:var(--surface);border:1px solid var(--line);border-radius:6px;padding:2px 6px;
+  font-variant-numeric:tabular-nums;pointer-events:none;opacity:0;
+  transition:opacity .15s ease, transform .18s cubic-bezier(.3,.9,.4,1);
+  white-space:nowrap;z-index:6;user-select:none;-webkit-user-select:none;
+}
+.numtag-above .numtag{bottom:calc(100% - 10px);transform:translate(-50%,6px);}
+.numtag-below .numtag{top:calc(100% - 10px);transform:translate(-50%,-6px);}
+.numtag-above .handle:hover .numtag, .numtag-above .handle.dragging .numtag,
+.numtag-below .handle:hover .numtag, .numtag-below .handle.dragging .numtag{
+  opacity:1;transform:translate(-50%,0);
+}
+
+.rulerchip{
+  position:absolute;bottom:11px;transform:translateX(-50%);
+  font-size:10px;font-weight:700;color:var(--surface);background:var(--text);
+  border-radius:5px;padding:1px 5px;font-variant-numeric:tabular-nums;
+  pointer-events:none;opacity:0;transition:opacity .12s;z-index:3;white-space:nowrap;
+  user-select:none;-webkit-user-select:none;
+}
+.rulerchip.on{opacity:1;}
+.ruler.dimlabels .rlabel{opacity:.25;}

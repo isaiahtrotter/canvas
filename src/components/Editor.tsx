@@ -70,6 +70,10 @@ export function Editor({ cornerRadius = 0 }: EditorProps) {
                 setFontPicker((p) => (p ? { ...p, value } : p))
             },
         })
+        // lets scripts/probe.mjs drive the EditorAPI surface directly (dev, or
+        // a production build opened with ?probe=1 for the pre-merge check)
+        if (import.meta.env.DEV || new URLSearchParams(location.search).has("probe"))
+            (window as any).__canvasEditor = api.current
         return () => {
             api.current?.destroy()
             api.current = null

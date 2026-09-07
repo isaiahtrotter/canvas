@@ -1,0 +1,53 @@
+/* Frames, frame labels (in the overlay), the frame draft, and text layers. */
+/* ---- frames ---- */
+.frame{
+  position:absolute;background:#fff;
+}
+/* Stacking while dragging: the moving frame (a duplicate included) rises
+   above other frames, and the text it carries rises above it — so its
+   contents don't vanish for the duration of the press. Text is given an
+   explicit layer so it stays above frames once any frame has a z-index. */
+.titem{z-index:1;}
+.frame.dragging{z-index:5;}
+.titem.dragging{z-index:6;}
+/* Frame labels live in the screen-space overlay (.labels), placed by
+   renderFrameLabels() at exact pixel positions — no transforms, so the text
+   can't drift off the frame as the zoom changes. left/top/max-width are set
+   inline; translateY(-100%) hangs the label above its anchor. The name
+   truncates with … first (it shrinks far more readily), then the time. */
+.labels{position:absolute;inset:0;pointer-events:none;z-index:2;}
+.flabel{
+  position:absolute;transform:translateY(-100%);pointer-events:auto;
+  display:flex;align-items:baseline;gap:7px;white-space:nowrap;
+  font-size:11px;line-height:1;
+}
+/* label colors come from #canvas (--fname/--ftime), picked in applyBg() to
+   keep contrast against the current background color */
+.fname{
+  color:var(--fname,var(--text-2));font-weight:500;cursor:pointer;border-radius:2px;padding:1px 2px;margin:-1px -2px;
+  flex:0 1000 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;
+}
+.flabel:hover .fname, .flabel.selected .fname{color:var(--accent);}
+.fname[contenteditable="true"]{
+  cursor:text;user-select:text;outline:none;color:#1c1c1c;
+  box-shadow:0 0 0 1.5px var(--accent);background:#fff;
+  overflow:visible;text-overflow:clip; /* show the whole name while renaming */
+}
+.ftime{
+  color:var(--ftime,var(--text-4));font-weight:400;font-variant-numeric:tabular-nums;position:relative;top:0;
+  flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;
+}
+.hide-times .ftime{display:none;}
+/* drawing a frame previews as a real (white) frame, not a selection */
+.frame-draft{
+  position:absolute;background:#fff;
+  pointer-events:none;
+}
+
+/* cursor:pointer is the CustomCursor hand trigger — it reads the computed
+   cursor value, so anything draggable here gets the morphing hand for free */
+.titem{
+  position:absolute;cursor:pointer;white-space:nowrap;line-height:1.2;
+  padding:0;border-radius:0;color:#1c1c1c;
+}
+.titem.dragging{cursor:pointer;}

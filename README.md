@@ -11,24 +11,35 @@ ideas quickly.
 npm install
 npm run dev        # http://localhost:5173
 npm run build      # typecheck + production build to dist/
+npm run check      # build, then run the behavior probe and diff it against the baseline
 ```
 
 ## Layout
 
 ```
 src/
-  main.tsx               React entry
-  App.tsx                Full-bleed <Editor />
-  components/Editor.tsx  React shell: mounts the engine once, paints cosmetic props
-  editor/
-    engine.ts            The editor itself — vanilla DOM, mountEditor(root) → cleanup
-    markup.ts            Static sidebar/canvas markup the engine renders into
-    editor.css           All editor styling. Selection box, handles, marquee and measurement
-                         guides render in a screen-space #overlay layer (constant 1px at any zoom)
-    time.ts              Relative/absolute time formatting for frame timestamps
-    color.ts             Color math (hex/rgb/hsv) shared by the engine and the picker
-  components/ColorPicker.tsx  Controlled color picker rendered by the React shell
-reference/               Original Framer components this was ported from
+  main.tsx                 React entry
+  App.tsx                  Full-bleed <Editor />
+  components/
+    Editor.tsx             React shell: mounts the engine once, owns the two floating popovers
+    ColorPicker.tsx        Controlled color picker rendered by the React shell
+    FontDropdown.tsx       Controlled font list rendered by the React shell
+  editor/                  The editor itself — vanilla DOM, one folder per feature
+    engine.ts              Composition root: mountEditor(root, hooks) → EditorAPI + destroy
+    markup.ts              Composes each component's *.html.ts fragment into the shell markup
+    editor.css             Ordered @import manifest of tokens.css + each component's *.css
+    core/                  types, the shared context, store (items/selection/history), persistence, geometry
+    view/                  pan, zoom, pixel grid            minimap/     the minimap
+    tools/                 tool pill + toast                times/       timestamps + heatmap
+    canvas/                rendering, labels, smart layout, clipping
+    selection/             drilling, selection overlay, snapping
+    interactions/          resize/edit/rename, drag, canvas pointerdown (frame draw, marquee), keyboard
+    panel/                 the right sidebar: fill/background, layout section, text section, size widget
+    settings/              prefs, theme, settings dialog, sidebars
+    measure/               Option/Alt distance guides    layers/      the (parked) layer list
+    color.ts, time.ts      pure helpers
+scripts/probe.mjs          Headless-browser characterization probe (see CLAUDE.md)
+reference/                 Original Framer components this was ported from
 ```
 
 ## Interactions
@@ -84,9 +95,13 @@ on refresh. Clear the `canvas.doc.v1` key to start over with the demo content.
 
 ## Adding an experiment
 
-Everything lives in `src/editor/engine.ts`. State is `items` (text layers and
-frames, discriminated by `kind`) + `selection`;
-call `emit()` after any change and every subscriber (canvas render, sidebar,
-widget) refreshes. Wrap a user-visible change in `pushHistory()` so it's
-undoable. To add a new widget design, add an entry to `VARIANTS` and a
-matching button to `markup.ts`.
+Each feature is a folder under `src/editor/` with an `install(ctx)` function
+that returns its API; `engine.ts` installs them in order onto the shared
+context. State is `ctx.doc.items` (text layers and frames, discriminated by
+`kind`) + `ctx.doc.selection`; call `ctx.bus.emit()` after any change and
+every subscriber (canvas render, sidebar, widget) refreshes. Wrap a
+user-visible change in `ctx.store.pushHistory()` so it's undoable. Reach other
+features through their `ctx` slot (`ctx.view.applyView()`), not by importing
+them. To add a new widget design, add an entry to `VARIANTS` in
+`panel/sizeWidget.ts` and a matching button to `panel/panel.html.ts`. Run
+`npm run check` before calling a change done; `CLAUDE.md` has the details.
