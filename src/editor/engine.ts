@@ -5,128 +5,44 @@ import { MARKUP } from "./markup"
 import { absTime, relTime } from "./time"
 import { compositeOver, contrastRatio, hexToRgb, isHex, rgbaCss } from "./color"
 
-interface TextItem {
-    kind: "text"
-    id: number
-    x: number
-    y: number
-    text: string
-    size: number
-    font: string
-    weight: number
-    lineHeight?: number // unitless multiplier; default 1.2
-    letterSpacing?: number // px; default 0
-    /** id of the frame this text belongs to, or null. Membership is decided by
-     *  where the pointer is when a drag ends (or where a frame is drawn), not by
-     *  geometry, so a text can hang past its frame's edge and still be clipped
-     *  by it. `undefined` only in documents saved before this field existed. */
-    parent?: number | null
-    /** last content/style edit — what the heatmap reads. Frames have the same field. */
-    updatedAt?: number
-    opacity?: number
-    fill: string // hex
-    alpha: number // 0–100
-}
-
-/** Smart layout: the frame arranges the text it holds itself. Treated as
- *  immutable — a change replaces the object — so undo snapshots (shallow
- *  copies of items) keep the version they were taken with. */
-export interface FrameLayout {
-    direction: "vertical" | "horizontal"
-    gap: number // between children, world units
-    padding: number // inside the frame, all sides
-    align: "start" | "center" | "end" // children along the cross axis
-    sizing: "hug" | "fixed" // hug: the frame fits its contents; fixed: keeps its w/h
-}
-export interface FrameItem {
-    kind: "frame"
-    id: number
-    x: number
-    y: number
-    w: number
-    h: number
-    name: string
-    createdAt: number
-    updatedAt: number
-    fill: string // hex
-    alpha: number // 0–100
-    layout?: FrameLayout | null
-    /** id of the frame this frame sits in, or null. Set the same way as a
-     *  text's: by where the pointer is when a drag ends, or by the frame drawn
-     *  around it — not by geometry, so a child frame can hang past its
-     *  parent's edge and still belong to it. `undefined` only in documents
-     *  saved before frames had this field. */
-    parent?: number | null
-}
-
-export interface Fill {
-    hex: string
-    alpha: number
-}
-/** What the editor tells its host about the Fill control. */
-export type FillMode = "selection" | "background"
-export interface EditorHooks {
-    /** The fill swatch was clicked: open a picker anchored to `anchor`, for the selection or the canvas background. */
-    onFillOpen?: (anchor: DOMRect, fill: Fill, mode: FillMode) => void
-    /** Selection (or, in background mode, the background color) changed while the host may be showing a picker. */
-    onFillChange?: (fill: Fill, mode: FillMode) => void
-    /** The font row was clicked: open a floating list of fonts anchored to `anchor`. `value` is the
-     *  selection's shared font, or "__mixed" when the selected text layers use different fonts. */
-    onFontOpen?: (anchor: DOMRect, options: string[], value: string) => void
-    /** The selection's font changed while the host may be showing the font list. */
-    onFontChange?: (value: string) => void
-}
-export interface EditorAPI {
-    /** Apply a fill to every selected layer. The first call after beginFillGesture() logs one undo step. */
-    setFill: (hex: string, alpha: number) => void
-    beginFillGesture: () => void
-    endFillGesture: () => void
-    /** Apply a font to every selected text layer. One undo step per call. */
-    setFont: (font: string) => void
-    destroy: () => void
-}
-
-type Item = TextItem | FrameItem
-const isFrame = (it: Item): it is FrameItem => it.kind === "frame"
-const isText = (it: Item): it is TextItem => it.kind === "text"
+import {
+    type TextItem,
+    type FrameItem,
+    type FrameLayout,
+    type Fill,
+    type FillMode,
+    type EditorHooks,
+    type EditorAPI,
+    type Item,
+    isFrame,
+    isText,
+    MIN,
+    MAX,
+    STEP,
+    INSET,
+    SIZE_MIN,
+    DEFAULT_LINE_HEIGHT,
+    lineHeightOf,
+    letterSpacingOf,
+    PALETTE,
+} from "./core/types"
+import { createContext, CANVAS_DEFAULT } from "./core/context"
+// the host-facing types keep their import path
+export type { FrameLayout, FrameItem, Fill, FillMode, EditorHooks, EditorAPI } from "./core/types"
 
 export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorAPI {
     root.innerHTML = MARKUP
-
-    // document-level listeners, tracked so unmount removes them
-    const docListeners: Array<[string, EventListener]> = []
-    function onDoc<K extends keyof DocumentEventMap>(
-        type: K,
-        fn: (e: DocumentEventMap[K]) => void
-    ) {
-        document.addEventListener(type, fn)
-        docListeners.push([type, fn as EventListener])
-    }
+    const ctx = createContext(root, hooks)
+    const onDoc = ctx.onDoc
+    // the document lives on ctx; these are the same objects (mutated in place, never reassigned)
+    const items = ctx.doc.items
+    const selection = ctx.doc.selection
+    const view = ctx.doc.view
+    // module slots not yet extracted from this closure: publish the closure's own functions
+    ctx.store = { touchParentFrames }
+    ctx.persist = { scheduleSave }
 
     /* ================= ported app ================= */
-
-    // MIN..MAX is the range the size slider shows; the size itself has no
-    // upper limit (type any value into the field) and a floor of SIZE_MIN
-    const MIN = 8,
-        MAX = 48,
-        STEP = 4,
-        INSET = 12
-    const SIZE_MIN = 1
-    const DEFAULT_LINE_HEIGHT = 1.2
-    const lineHeightOf = (it: TextItem) => it.lineHeight ?? DEFAULT_LINE_HEIGHT
-    const letterSpacingOf = (it: TextItem) => it.letterSpacing ?? 0
-    const PALETTE = [
-        "#008FF0",
-        "#F24822",
-        "#FFCD29",
-        "#14AE5C",
-        "#9747FF",
-        "#FF7A00",
-        "#FF24BD",
-        "#00B5CE",
-        "#845EF7",
-        "#E8590C",
-    ]
 
     const VARIANTS = {
         1: { shape: "bar", ruler: "always", barH: 44 },
@@ -147,42 +63,22 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
     let activeVariant = 1
 
     /* ================= app state ================= */
-    let nextId = 1
-    const items: Item[] = []
-    const selection = new Set<number>()
-    const listeners = []
-    function subscribe(fn) {
-        listeners.push(fn)
-    }
-    function emit() {
-        touchParentFrames()
-        listeners.forEach((fn) => fn())
-        scheduleSave()
-    }
+    const { subscribe, emit } = ctx.bus
 
     /* A frame's "edited" time also moves when anything inside it changes.
        Rather than sprinkling bumps through every mutation path, each emit
        diffs text layers against the last emit: a text that changed (moved,
        retyped, restyled, or newly added) bumps the frame that contains it now
        and, if it moved, the one it came from. Undo/redo set `restoring` so a
-       restored snapshot keeps the timestamps it was saved with. */
-    let restoring = false
-    let carryingFrameDrag = false // true only while a frame-drag's own emit() is diffing
-    // true only while an option/ctrl-drag's final emit() is settling: the
-    // dragged item can only end up in one frame, so its entering-bump fires
-    // as normal but the frame it happened to pass through/leave along the
-    // way does not also light up
-    let suppressLeaveBump = false
-    // true while a drag re-renders mid-gesture (a duplicate appearing or
-    // being withdrawn): nothing is diffed or stamped, and the pre-drag
-    // baseline is kept intact so the release can settle everything at once
-    let skipTouch = false
+       restored snapshot keeps the timestamps it was saved with. The switches
+       (restoring, carryingFrameDrag, suppressLeaveBump, skipTouch) live in
+       ctx.flags, since drags and the side panel flip them too. */
     const lastText = new Map<number, { sig: string; parent: number | null }>()
     function textSig(it: TextItem) {
         return [it.x, it.y, it.text, it.size, it.font, it.weight, it.fill, it.alpha, lineHeightOf(it), letterSpacingOf(it)].join("|")
     }
     function touchParentFrames() {
-        if (skipTouch) return
+        if (ctx.flags.skipTouch) return
         const now = Date.now()
         const seen = new Set<number>()
         items.filter(isText).forEach((t) => {
@@ -191,13 +87,13 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
             const parent = t.parent ?? null
             const prev = lastText.get(t.id)
             if (!prev || prev.sig !== sig || prev.parent !== parent) {
-                if (!restoring && !carryingFrameDrag) {
+                if (!ctx.flags.restoring && !ctx.flags.carryingFrameDrag) {
                     t.updatedAt = now
                     const bump = (f: FrameItem | null) => {
                         if (f) f.updatedAt = now
                     }
                     bump(containingFrame(t))
-                    if (prev && prev.parent !== parent && !suppressLeaveBump)
+                    if (prev && prev.parent !== parent && !ctx.flags.suppressLeaveBump)
                         bump(frameById(prev.parent)) // the frame it left
                 }
                 lastText.set(t.id, { sig, parent })
@@ -228,10 +124,10 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
         st.items.forEach((it) => items.push(Object.assign({}, it)))
         selection.clear()
         st.selection.forEach((id) => selection.add(id))
-        nextId = items.reduce((m, it) => Math.max(m, it.id), 0) + 1
-        restoring = true
+        ctx.doc.nextId = items.reduce((m, it) => Math.max(m, it.id), 0) + 1
+        ctx.flags.restoring = true
         emit()
-        restoring = false
+        ctx.flags.restoring = false
     }
     function undo() {
         if (!history.length) return
@@ -260,7 +156,7 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
         const it: TextItem = Object.assign(
             {
                 kind: "text" as const,
-                id: nextId++,
+                id: ctx.doc.nextId++,
                 x: 60,
                 y: 60,
                 text: "Text",
@@ -301,19 +197,18 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
         return best
     }
 
-    let frameCount = 0
     function addFrame(props: Partial<FrameItem>): FrameItem {
         const now = Date.now()
-        frameCount++
+        ctx.doc.frameCount++
         const f: FrameItem = Object.assign(
             {
                 kind: "frame" as const,
-                id: nextId++,
+                id: ctx.doc.nextId++,
                 x: 0,
                 y: 0,
                 w: 200,
                 h: 150,
-                name: "Frame " + frameCount,
+                name: "Frame " + ctx.doc.frameCount,
                 createdAt: now,
                 updatedAt: now,
                 fill: "#ffffff",
@@ -348,7 +243,7 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
         try {
             localStorage.setItem(
                 DOC_KEY,
-                JSON.stringify({ items, nextId, frameCount, bg, view })
+                JSON.stringify({ items, nextId: ctx.doc.nextId, frameCount: ctx.doc.frameCount, bg: ctx.doc.bg, view })
             )
         } catch (_) {
             /* storage unavailable or full — the session still works, just doesn't persist */
@@ -389,9 +284,9 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
                 const f = items.find((it) => it.id === t.parent)
                 t.updatedAt = f && isFrame(f) ? f.updatedAt : Date.now()
             })
-            nextId = typeof d.nextId === "number" ? d.nextId : items.reduce((m, it) => Math.max(m, it.id), 0) + 1
-            frameCount = typeof d.frameCount === "number" ? d.frameCount : items.filter(isFrame).length
-            if (d.bg && isHex(d.bg.hex)) bg = { hex: d.bg.hex, alpha: d.bg.alpha ?? 100 }
+            ctx.doc.nextId = typeof d.nextId === "number" ? d.nextId : items.reduce((m, it) => Math.max(m, it.id), 0) + 1
+            ctx.doc.frameCount = typeof d.frameCount === "number" ? d.frameCount : items.filter(isFrame).length
+            if (d.bg && isHex(d.bg.hex)) ctx.doc.bg = { hex: d.bg.hex, alpha: d.bg.alpha ?? 100 }
             if (d.view && Number.isFinite(d.view.x) && Number.isFinite(d.view.y) && d.view.z > 0)
                 Object.assign(view, d.view)
             return true
@@ -436,7 +331,6 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
     const ZOOM_MIN = 0.1,
         ZOOM_MAX = 20 // 2000%
     const GRID_FROM = 10 // the pixel grid appears from 1000%
-    const view = { x: 0, y: 0, z: 1 }
     const zoomVal = root.querySelector<HTMLElement>("#zoomVal")
     const grid = root.querySelector<HTMLCanvasElement>("#grid")
     /* One line per integer world coordinate, each placed at its exact screen
@@ -970,7 +864,7 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
     function applyHeat() {
         const now = Date.now()
         items.forEach((it) => {
-            const node = canvas.querySelector<HTMLElement>('[data-id="' + it.id + '"]')
+            const node = ctx.nodeFor(it.id)
             if (!node) return
             // stagger the glow so frames don't all breathe together
             node.style.setProperty("--phase", ((it.id * 0.37) % 1).toFixed(3))
@@ -1040,7 +934,7 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
     function applyWash() {
         // text only — a frame's background is its fill
         items.filter(isText).forEach((it) => {
-            const node = canvas.querySelector<HTMLElement>('[data-id="' + it.id + '"]')
+            const node = ctx.nodeFor(it.id)
             if (!node) return
             node.style.background =
                 hoverWash && hoverWash.id === it.id
@@ -1137,7 +1031,7 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
         label.append(name, time)
         label.addEventListener("pointerdown", (e) => {
             const it = itemById(id)
-            const node = canvas.querySelector<HTMLElement>('[data-id="' + id + '"]')
+            const node = ctx.nodeFor(id)
             if (it && node) onItemPointerDown(e, it, node)
         })
         name.addEventListener("dblclick", (e) => {
@@ -1423,7 +1317,7 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
     }
     function applyClips() {
         items.forEach((it) => {
-            const node = canvas.querySelector<HTMLElement>('[data-id="' + it.id + '"]')
+            const node = ctx.nodeFor(it.id)
             if (!node) return
             // A node holding a clip-path — even one that's the empty string,
             // just from having had one before — appears to get promoted to
@@ -1485,7 +1379,7 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
         })
         // hovering a text row underlines it on the canvas, like hovering the text itself
         row.addEventListener("mouseenter", () => {
-            const node = canvas.querySelector<HTMLElement>('[data-id="' + it.id + '"]')
+            const node = ctx.nodeFor(it.id)
             if (isText(it) && node) {
                 lastHover = node
                 renderUnderlines()
@@ -1582,7 +1476,7 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
        text is measured off its node (unscaled layout size inside #world). */
     function nodeSize(it: Item) {
         if (isFrame(it)) return { w: it.w, h: it.h }
-        const node = canvas.querySelector<HTMLElement>('[data-id="' + it.id + '"]')
+        const node = ctx.nodeFor(it.id)
         if (!node) return { w: 0, h: 0 }
         // getBoundingClientRect is fractional (offsetWidth/Height round), and
         // includes the zoom — divide it back out to get world units
@@ -1696,7 +1590,7 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
         const hoveredItem = lastHover && lastHover.isConnected ? itemById(Number(lastHover.dataset.id)) ?? null : null
         const hoverTarget = hoveredItem ? selectTargetFor(hoveredItem) : null
         items.filter(isText).forEach((it) => {
-            const node = canvas.querySelector<HTMLElement>('[data-id="' + it.id + '"]')
+            const node = ctx.nodeFor(it.id)
             if (!node || node === editingEl) return
             if (!(node.classList.contains("sel-underline") || hoverTarget === it)) return
             let { w, h } = nodeSize(it)
@@ -1937,7 +1831,7 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
             it.y = Math.round(y)
             it.w = Math.round(w)
             it.h = Math.round(h)
-            const node = canvas.querySelector<HTMLElement>('[data-id="' + it.id + '"]')
+            const node = ctx.nodeFor(it.id)
             if (node) {
                 node.style.left = it.x + "px"
                 node.style.top = it.y + "px"
@@ -2050,7 +1944,7 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
         const target = selectTargetFor(it)
         if (target !== it) {
             it = target
-            el = canvas.querySelector<HTMLElement>('[data-id="' + target.id + '"]') ?? el
+            el = ctx.nodeFor(target.id) ?? el
         }
 
         if (e.shiftKey) {
@@ -2109,16 +2003,16 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
         // is re-applied after a mid-drag duplicate, not just at the start.
         const markDragging = (on: boolean) =>
             starts.forEach((s) => {
-                const node = canvas.querySelector<HTMLElement>('[data-id="' + s.it.id + '"]')
+                const node = ctx.nodeFor(s.it.id)
                 if (node) node.classList.toggle("dragging", on)
             })
         markDragging(true)
         // a mid-gesture re-render: shows/hides the copies without any frame
         // timestamp moving — those settle once, at release
         function rerenderQuiet() {
-            skipTouch = true
+            ctx.flags.skipTouch = true
             emit()
-            skipTouch = false
+            ctx.flags.skipTouch = false
             markDragging(true) // the re-render dropped the class
         }
         /* Option (mac) / ctrl (windows) is a live modifier, not a one-shot
@@ -2265,13 +2159,13 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
                 // that's not a content edit, so don't let the position diff
                 // below bump the frame's timestamp for text that just came along
                 const draggedFrame = starts.some((s) => isFrame(s.it))
-                if (draggedFrame) carryingFrameDrag = true
+                if (draggedFrame) ctx.flags.carryingFrameDrag = true
                 // the dragged item can only land in one frame — if a copy was
                 // left behind along the way, don't also light up whatever it left
-                if (duplicated) suppressLeaveBump = true
+                if (duplicated) ctx.flags.suppressLeaveBump = true
                 emit()
-                carryingFrameDrag = false
-                suppressLeaveBump = false
+                ctx.flags.carryingFrameDrag = false
+                ctx.flags.suppressLeaveBump = false
             }
         }
         document.addEventListener("pointermove", mv)
@@ -2306,7 +2200,7 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
                 draftLabel.className = "flabel"
                 const name = document.createElement("span")
                 name.className = "fname"
-                name.textContent = "Frame " + (frameCount + 1) // the name it will get
+                name.textContent = "Frame " + (ctx.doc.frameCount + 1) // the name it will get
                 const time = document.createElement("span")
                 time.className = "ftime"
                 time.textContent = relTime(Date.now())
@@ -2377,7 +2271,7 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
         selection.add(it.id)
         setTool("move")
         emit()
-        const el = canvas.querySelector<HTMLElement>('[data-id="' + it.id + '"]')
+        const el = ctx.nodeFor(it.id)
         if (el) startEditing(el, it)
     }
 
@@ -2473,7 +2367,7 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
                     overlay.appendChild(b)
                     return
                 }
-                const node = canvas.querySelector<HTMLElement>('[data-id="' + it.id + '"]')
+                const node = ctx.nodeFor(it.id)
                 if (node) node.classList.toggle("sel-underline", touched.has(it.id))
             })
             renderUnderlines()
@@ -3080,8 +2974,7 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
     const fillSwatch = fillRow.querySelector<HTMLElement>(".swatch")
     const fillHex = fillRow.querySelector<HTMLElement>(".hex")
     const fillPct = fillRow.querySelector<HTMLElement>(".pct")
-    const CANVAS_DEFAULT = "#ededed"
-    let bg = { hex: CANVAS_DEFAULT, alpha: 100 }
+    // the canvas background is document data: ctx.doc.bg (saved with the doc, reset from settings)
     // The canvas is independent of the UI theme: its background is whatever
     // the user set, and the label / selection colors derive from that color
     // alone (composited over white, as before) — never from light/dark mode.
@@ -3129,6 +3022,7 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
             applyGrid()
             return
         }
+        const bg = ctx.doc.bg
         canvas.style.backgroundColor = rgbaCss(bg.hex, bg.alpha)
         const seen = compositeOver(hexToRgb(bg.hex), bg.alpha, surfaceRgb())
         const p = labelPalette(seen)
@@ -3160,6 +3054,7 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
         fillRow.classList.toggle("disabled", false) // always actionable now — selection fill, or the background
         if (mode === "background") {
             fillRow.classList.remove("mixed")
+            const bg = ctx.doc.bg
             fillSwatch.style.background = rgbaCss(bg.hex, bg.alpha)
             fillHex.textContent = bg.hex.replace("#", "").toUpperCase()
             fillPct.textContent = bg.alpha + "%"
@@ -3195,7 +3090,7 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
         if (!hooks.onFillOpen) return
         const mode = fillMode()
         if (mode === "background") {
-            hooks.onFillOpen(fillRow.getBoundingClientRect(), { ...bg }, mode)
+            hooks.onFillOpen(fillRow.getBoundingClientRect(), { ...ctx.doc.bg }, mode)
             return
         }
         const { fill } = selectionFill()
@@ -3212,8 +3107,8 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
         hex = (hex.startsWith("#") ? hex : "#" + hex).toLowerCase()
         alpha = Math.max(0, Math.min(100, Math.round(alpha)))
         if (fillMode() === "background") {
-            if (bg.hex === hex && bg.alpha === alpha) return
-            bg = { hex, alpha }
+            if (ctx.doc.bg.hex === hex && ctx.doc.bg.alpha === alpha) return
+            ctx.doc.bg = { hex, alpha }
             applyBg()
             updateFill()
             scheduleSave()
@@ -3348,9 +3243,9 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
             it.x += dx
             it.y += dy
         })
-        if (Array.from(moving.values()).some(isFrame)) carryingFrameDrag = true
+        if (Array.from(moving.values()).some(isFrame)) ctx.flags.carryingFrameDrag = true
         emit()
-        carryingFrameDrag = false
+        ctx.flags.carryingFrameDrag = false
     }
     // repositioning a frame (typed X/Y) isn't a content edit either
     function moveSelection(dx: number, dy: number) {
@@ -4242,7 +4137,7 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
         })
     }
     root.querySelector<HTMLElement>("#prefResetBg")?.addEventListener("click", () => {
-        bg = { hex: CANVAS_DEFAULT, alpha: 100 }
+        ctx.doc.bg = { hex: CANVAS_DEFAULT, alpha: 100 }
         applyBg()
         updateFill()
         scheduleSave()
@@ -4348,9 +4243,9 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
     applyTheme()
     applyBg()
     renderAvatar()
-    restoring = true
+    ctx.flags.restoring = true
     touchParentFrames() // prime lastText without bumping anything
-    restoring = false
+    ctx.flags.restoring = false
     renderCanvas() // re-render with the centered positions
     buildPanel()
     updateLayoutPanel()
@@ -4360,7 +4255,7 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
     updateVariantButtons()
 
     const destroy = () => {
-        docListeners.forEach(([t, f]) => document.removeEventListener(t, f))
+        ctx.disposeDocListeners()
         window.removeEventListener("blur", onWindowBlur)
         clearInterval(timesTimer)
         clearInterval(heatTimer)
