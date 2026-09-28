@@ -77,7 +77,7 @@
 .fillrow.disabled{opacity:.5;cursor:default;}
 .fillrow.disabled:hover{background:var(--input-bg);}
 .fillrow.mixed .hex{color:var(--text-3);font-style:italic;}
-.fillrow .swatch{width:16px;height:16px;border-radius:4px;background:var(--text);border:1px solid var(--line);flex-shrink:0;}
+.fillrow .swatch{width:16px;height:16px;border-radius:4px;background:var(--text);flex-shrink:0;}
 .fillrow .hex{font-size:12px;color:var(--text);font-variant-numeric:tabular-nums;}
 .fillrow .pct{font-size:12px;color:var(--text-3);margin-left:auto;font-variant-numeric:tabular-nums;}
 .propgroup{display:flex;flex-direction:column;gap:12px;}
