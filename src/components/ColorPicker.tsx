@@ -124,20 +124,20 @@ const SLIDER_THUMB_CSS = `
     -webkit-appearance: none;
     appearance: none;
     width: 14px;
-    height: 56px;
-    border-radius: 7px;
-    background: transparent;
-    border: 3px solid #fff;
-    box-shadow: 0 0 6px rgba(0,0,0,0.35), 0 0 10px rgba(255,255,255,0.5);
+    height: 14px;
+    border-radius: 50%;
+    background: white;
+    border: 2px solid #d1d5db;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.15);
     cursor: pointer;
   }
   .cp-slider::-moz-range-thumb {
     width: 14px;
-    height: 56px;
-    border-radius: 7px;
-    background: transparent;
-    border: 3px solid #fff;
-    box-shadow: 0 0 6px rgba(0,0,0,0.35), 0 0 10px rgba(255,255,255,0.5);
+    height: 14px;
+    border-radius: 50%;
+    background: white;
+    border: 2px solid #d1d5db;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.15);
     cursor: pointer;
   }
   .cp-btn {
@@ -1022,12 +1022,12 @@ export default function ColorPicker({
         )}
       </div>
 
-      <div style={{ position: "relative", height: 40, marginTop: 12 }}>
+      <div style={{ position: "relative", height: 12, marginTop: 12 }}>
         <div
           style={{
             position: "absolute",
             inset: 0,
-            borderRadius: 12,
+            borderRadius: 9999,
             background:
               "linear-gradient(to right, #ff0000, #ffff00, #00ff00, #00ffff, #0000ff, #ff00ff, #ff0000)",
           }}
@@ -1044,13 +1044,13 @@ export default function ColorPicker({
         />
       </div>
 
-      <div style={{ position: "relative", height: 40, marginTop: 12 }}>
+      <div style={{ position: "relative", height: 12, marginTop: 12 }}>
         <div
           style={{
             ...CHECKER,
             position: "absolute",
             inset: 0,
-            borderRadius: 12,
+            borderRadius: 9999,
             overflow: "hidden",
           }}
         >
@@ -1058,7 +1058,7 @@ export default function ColorPicker({
             style={{
               position: "absolute",
               inset: 0,
-              borderRadius: 12,
+              borderRadius: 9999,
               background: `linear-gradient(to right, rgba(${rgb.join(",")},0), rgba(${rgb.join(",")},1))`,
             }}
           />
