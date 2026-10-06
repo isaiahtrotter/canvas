@@ -28,7 +28,7 @@ import type { TimesAPI } from "../times/times"
 import type { MinimapAPI } from "../minimap/minimap"
 import type { LayersAPI } from "../layers/layers"
 import type { MeasureAPI } from "../measure/measure"
-import type { BoxMenuAPI } from "../boxmenu/boxmenu"
+import type { RadialAPI } from "../radial/radial"
 import type { ViewAPI } from "../view/view"
 
 export interface Rect {
@@ -149,7 +149,7 @@ export interface EditorContext {
     keymap: KeymapAPI
     panel: PanelAPI
     settings: SettingsAPI
-    boxmenu: BoxMenuAPI
+    radial: RadialAPI
 }
 
 export const CANVAS_DEFAULT = "#ededed"

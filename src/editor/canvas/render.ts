@@ -204,6 +204,7 @@ export function installCanvas(ctx: EditorContext): CanvasAPI & Disposable {
         setStyle(el, "width", it.w + "px")
         setStyle(el, "height", it.h + "px")
         setStyle(el, "background", rgbaCss(it.fill, it.alpha))
+        setStyle(el, "box-shadow", it.strokeWidth ? `inset 0 0 0 ${it.strokeWidth}px ${it.stroke ?? "#1c1c1c"}` : "")
         setStyle(el, "opacity", String((it.opacity ?? 100) / 100))
         setStyle(el, "border-radius", [].concat(it.radius ?? 0).map((r) => r + "px").join(" "))
     }

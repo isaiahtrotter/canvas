@@ -1,0 +1,54 @@
+/* The right-click radial menu for frames: a ring of soft capsules. */
+.radial{
+  position:fixed;z-index:60;user-select:none;-webkit-user-select:none;touch-action:none;
+  font-family:'Inter',system-ui,sans-serif;animation:radial-in .14s ease-out;
+}
+@keyframes radial-in{from{opacity:0;transform:scale(.88)}to{opacity:1;transform:none}}
+.radial svg{width:100%;height:100%;display:block;overflow:visible;}
+.rd-ring{position:absolute;inset:0;}
+.radial.color .rd-ring{display:none;}
+.rd-cap{cursor:pointer;}
+.rd-cap[data-prop="strokeWidth"],.rd-cap[data-prop="opacity"],.rd-cap[data-prop="radius"]{cursor:ew-resize;}
+.rd-capsule{fill:none;stroke-linecap:round;filter:drop-shadow(0 4px 10px rgba(0,0,0,.18));transition:filter .1s,d .08s;}
+.rd-cap:hover .rd-capsule{filter:drop-shadow(0 5px 14px rgba(0,0,0,.28)) brightness(1.05);}
+.rd-cap.active .rd-capsule{filter:drop-shadow(0 6px 16px rgba(0,0,0,.34)) brightness(1.08);}
+.rd-cap[data-prop="fill"] .rd-capsule,.rd-cap[data-prop="strokeColor"] .rd-capsule{stroke-width:58;}
+.rd-icon{fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round;pointer-events:none;}
+.rd-cap[data-prop="fill"] .rd-icon path{fill:currentColor;}
+/* light capsules (a white fill) need an edge to read against the canvas */
+.rd-cap[data-prop="fill"] .rd-capsule{stroke-opacity:1;}
+.rd-tip{
+  position:absolute;transform:translate(-50%,-50%);padding:4px 10px;border-radius:12px;background:#111;color:#fff;
+  font-size:12px;font-weight:600;white-space:nowrap;pointer-events:none;opacity:0;transition:opacity .08s;
+  font-variant-numeric:tabular-nums;
+}
+.rd-tip.on{opacity:1;}
+
+/* ---- round color picker: replaces the ring while open ---- */
+.rd-color{
+  display:none;position:absolute;inset:0;border-radius:50%;background:var(--surface);
+  box-shadow:0 0 0 1px var(--line),0 10px 30px rgba(0,0,0,.25);
+}
+.radial.color .rd-color{display:block;}
+.rd-color svg{position:absolute;left:14px;top:14px;width:272px;height:272px;overflow:visible;pointer-events:none;}
+.rd-disc{
+  position:absolute;left:150px;top:150px;width:184px;height:184px;margin:-92px 0 0 -92px;border-radius:50%;
+  background:radial-gradient(circle closest-side,#fff,rgba(255,255,255,0)),
+    conic-gradient(from 90deg,#f00,#ff0,#0f0,#0ff,#00f,#f0f,#f00);
+  box-shadow:0 0 0 1px var(--line);cursor:crosshair;
+}
+.rd-disc-dark{position:absolute;inset:0;border-radius:50%;background:#000;pointer-events:none;}
+.rd-knob{
+  position:absolute;width:16px;height:16px;margin:-8px 0 0 -8px;border-radius:50%;
+  border:2px solid #fff;box-shadow:0 0 0 1px rgba(0,0,0,.35),0 1px 4px rgba(0,0,0,.3);pointer-events:none;
+}
+.rd-track{fill:none;stroke-width:14;stroke-linecap:round;pointer-events:stroke;cursor:pointer;}
+.rd-thumb{stroke:#fff;stroke-width:2.5;pointer-events:all;cursor:grab;filter:drop-shadow(0 1px 2px rgba(0,0,0,.4));}
+.rd-color.no-alpha [data-arc="alpha"],.rd-color.no-alpha [data-thumb="alpha"]{display:none;}
+.rd-back{
+  position:absolute;left:50%;bottom:-38px;transform:translateX(-50%);display:flex;align-items:center;gap:7px;
+  height:26px;padding:0 12px 0 6px;border:1px solid var(--line);border-radius:13px;background:var(--surface);
+  color:var(--text);font:600 11px 'Inter',system-ui,sans-serif;cursor:pointer;
+}
+.rd-back:hover{background:var(--surface-2);}
+.rd-chip{width:14px;height:14px;border-radius:50%;border:1px solid var(--line);}

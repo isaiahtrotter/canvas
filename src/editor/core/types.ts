@@ -47,6 +47,8 @@ export interface FrameItem {
     fill: string // hex
     alpha: number // 0–100
     layout?: FrameLayout | null
+    stroke?: string // hex; default #1c1c1c
+    strokeWidth?: number // inside the frame edge, world units; default 0 (none)
     opacity?: number // 0–100 of the frame itself; default 100
     /** corner radius, world units; default 0. A number is all four corners; a 4-tuple is [top-left, top-right, bottom-right, bottom-left] */
     radius?: number | [number, number, number, number]

@@ -1,32 +1,50 @@
-// Right-click a frame: a box menu. A miniature of the frame sits on top with
-// a handle in each corner — drag one inward and a circle grows in the corner
-// to show the radius (Shift moves all four together). Below it: an opacity
-// slider, and a Fill row that swaps the box for a round color picker (hue /
-// saturation disc, with brightness and opacity arcs around it).
-// One undo step per gesture. Escape or a click outside closes it.
+// Right-click a frame: a ring of capsules, one per property. Fill and Stroke
+// color open a round color picker in place of the ring; Stroke width, Opacity
+// and Radius (all four corners at once) are scrubbed by pressing the capsule
+// and dragging sideways — the capsule's length follows the value. One undo
+// step per gesture. Escape or a click outside closes it.
 import type { EditorContext, Disposable } from "../core/context"
 import { type FrameItem, isFrame } from "../core/types"
-import { hexToRgb, hsvToRgb, rgbToHex, rgbToHsv, rgbaCss } from "../color"
+import { hexToRgb, hsvToRgb, rgbToHex, rgbToHsv, rgbaCss, relativeLuminance } from "../color"
 
-export interface BoxMenuAPI {
+export interface RadialAPI {
     open(it: FrameItem, x: number, y: number): void
     close(): void
 }
 
-const W = 280, // menu width
-    SIZE = 272, // the color picker's square
-    C = SIZE / 2
-const PREVIEW_W = 240,
-    PREVIEW_H = 150
-type Corners = [number, number, number, number] // [tl, tr, br, bl]
-const CORNERS = ["tl", "tr", "br", "bl"] as const
+const SIZE = 300,
+    C = SIZE / 2,
+    RING_R = 100, // centerline of the capsules
+    CAP_W = 58 // capsule thickness
+const NS = "http://www.w3.org/2000/svg"
+const SLOT = (Math.PI * 2) / 5
+const CAP_ANG = CAP_W / 2 / RING_R // what a round cap adds at each end, in radians
+const MAX_HALF = SLOT / 2 - CAP_ANG - 0.05 // path half-length of a full capsule
+const MIN_SCALE = 0.04
+const MAX_STROKE = 40
+const DEFAULT_STROKE = "#1c1c1c"
+
+type Prop = "fill" | "strokeColor" | "strokeWidth" | "opacity" | "radius"
+const PROPS: Array<{ id: Prop; label: string; tone: string; icon: string }> = [
+    { id: "fill", label: "Fill", tone: "#ffffff", icon: '<path d="M10 2.8C10 2.8 4.6 8.7 4.6 12.3a5.4 5.4 0 0 0 10.8 0C15.4 8.7 10 2.8 10 2.8Z"/>' },
+    { id: "strokeColor", label: "Stroke color", tone: "#1c1c1c", icon: '<rect x="3.5" y="3.5" width="13" height="13" rx="4"/><rect x="7" y="7" width="6" height="6" rx="2" opacity=".45"/>' },
+    { id: "strokeWidth", label: "Stroke width", tone: "#5b78c7", icon: '<path d="M3.5 5h13M3.5 10h13M3.5 15.5h13" stroke-width="1"/><path d="M3.5 10h13" stroke-width="2.2"/><path d="M3.5 15.5h13" stroke-width="3.4"/>' },
+    { id: "opacity", label: "Opacity", tone: "#8e6bbf", icon: '<circle cx="10" cy="10" r="6.6"/><path d="M10 3.4v13.2a6.6 6.6 0 0 1 0-13.2Z" fill="currentColor" stroke="none"/>' },
+    { id: "radius", label: "Radius", tone: "#e8793c", icon: '<path d="M4 16.5V10a6 6 0 0 1 6-6h6.5"/>' },
+]
 
 // color view geometry
 const DISC = 92 // hue/saturation disc radius
 const ARC_R = 116 // brightness / opacity arc radius
 const ARC_SPAN = (75 * Math.PI) / 180 // each arc reaches this far above and below the horizontal
 
-export function installBoxMenu(ctx: EditorContext): BoxMenuAPI & Disposable {
+const svgEl = <K extends keyof SVGElementTagNameMap>(tag: K, attrs: Record<string, string> = {}) => {
+    const el = document.createElementNS(NS, tag)
+    for (const k in attrs) el.setAttribute(k, attrs[k])
+    return el
+}
+
+export function installRadial(ctx: EditorContext): RadialAPI & Disposable {
     const { canvas } = ctx.dom
     const selection = ctx.doc.selection
     const { emit } = ctx.bus
@@ -36,11 +54,10 @@ export function installBoxMenu(ctx: EditorContext): BoxMenuAPI & Disposable {
     let refresh: () => void = () => {}
 
     const opacityOf = (f: FrameItem) => f.opacity ?? 100
-    const cornersOf = (f: FrameItem): Corners => {
-        const r = f.radius ?? 0
-        return typeof r === "number" ? [r, r, r, r] : [...r]
-    }
-    const maxRadius = (f: FrameItem) => Math.floor(Math.min(f.w, f.h) / 2)
+    const radiusOf = (f: FrameItem) => (typeof f.radius === "number" ? f.radius : f.radius ? Math.max(...f.radius) : 0)
+    const strokeOf = (f: FrameItem) => f.stroke ?? DEFAULT_STROKE
+    const strokeWidthOf = (f: FrameItem) => f.strokeWidth ?? 0
+    const maxRadius = (f: FrameItem) => Math.max(1, Math.floor(Math.min(f.w, f.h) / 2))
 
     function close() {
         if (!menu) return
@@ -59,8 +76,9 @@ export function installBoxMenu(ctx: EditorContext): BoxMenuAPI & Disposable {
         e.stopPropagation()
         close()
     }
-    function track(e: PointerEvent, move: (ev: PointerEvent) => void, up?: () => void) {
-        const mv = (ev: PointerEvent) => move(ev)
+    function drag(e: PointerEvent, move: (dx: number) => void, up?: () => void) {
+        const startX = e.clientX
+        const mv = (ev: PointerEvent) => move(ev.clientX - startX)
         const end = () => {
             document.removeEventListener("pointermove", mv)
             document.removeEventListener("pointerup", end)
@@ -68,185 +86,173 @@ export function installBoxMenu(ctx: EditorContext): BoxMenuAPI & Disposable {
         }
         document.addEventListener("pointermove", mv)
         document.addEventListener("pointerup", end)
-        move(e)
+    }
+
+    const capPath = (i: number, scale: number) => {
+        const mid = -Math.PI / 2 + i * SLOT
+        const half = MAX_HALF * Math.max(MIN_SCALE, Math.min(1, scale))
+        const p = (a: number) => `${(C + RING_R * Math.cos(a)).toFixed(2)} ${(C + RING_R * Math.sin(a)).toFixed(2)}`
+        return `M ${p(mid - half)} A ${RING_R} ${RING_R} 0 0 1 ${p(mid + half)}`
     }
 
     function open(it: FrameItem, x: number, y: number) {
         close()
         target = it
-        menu = document.createElement("div")
-        menu.className = "bm"
-        menu.style.width = W + "px"
-        menu.innerHTML = `
-          <div class="bm-main">
-            <div class="bm-stage">
-              <div class="bm-checker"></div>
-              <div class="bm-box"></div>
-              <div class="bm-readout"></div>
-            </div>
-            <div class="bm-row"><span class="bm-key">Opacity</span>
-              <div class="bm-slider"><div class="bm-slider-fill"></div><div class="bm-slider-thumb"></div></div>
-              <span class="bm-val bm-opval"></span></div>
-            <button class="bm-row bm-fill" type="button"><span class="bm-key">Fill</span>
-              <span class="bm-chip"></span><span class="bm-hex"></span><span class="bm-val bm-alval"></span></button>
-          </div>`
-        const q = <T extends Element>(sel: string) => menu!.querySelector<T>(sel)!
-        const stage = q<HTMLElement>(".bm-stage")
-        const box = q<HTMLElement>(".bm-box")
-        const readout = q<HTMLElement>(".bm-readout")
-        const slider = q<HTMLElement>(".bm-slider")
         const f = it
+        menu = document.createElement("div")
+        menu.className = "radial"
+        const half = SIZE / 2 + 12
+        const cx = Math.max(half, Math.min(window.innerWidth - half, x))
+        const cy = Math.max(half, Math.min(window.innerHeight - half, y))
+        menu.style.left = cx - SIZE / 2 + "px"
+        menu.style.top = cy - SIZE / 2 + "px"
+        menu.style.width = menu.style.height = SIZE + "px"
 
-        // the miniature: scaled to fit, corner handles + circles drawn over it
-        const s = Math.min(PREVIEW_W / f.w, PREVIEW_H / f.h)
-        const pw = f.w * s,
-            ph = f.h * s
-        box.style.width = pw + "px"
-        box.style.height = ph + "px"
-        const circles: HTMLElement[] = [],
-            handles: HTMLElement[] = []
-        CORNERS.forEach((c, i) => {
-            const circle = document.createElement("div")
-            circle.className = "bm-circle"
-            const h = document.createElement("div")
-            h.className = "bm-handle"
-            h.style.cursor = i % 2 === 0 ? "nwse-resize" : "nesw-resize"
-            h.title = "Drag to round this corner (Shift: all corners)"
-            h.addEventListener("pointerdown", (e) => onHandleDown(e, i))
-            box.append(circle, h)
-            circles.push(circle)
-            handles.push(h)
+        const svg = svgEl("svg", { viewBox: `0 0 ${SIZE} ${SIZE}`, class: "rd-ring" })
+        const caps = {} as Record<Prop, { path: SVGPathElement; icon: SVGGElement; g: SVGGElement }>
+        PROPS.forEach((p, i) => {
+            const g = svgEl("g", { class: "rd-cap" })
+            g.dataset.prop = p.id
+            const path = svgEl("path", { d: capPath(i, 1), "stroke-width": String(CAP_W), class: "rd-capsule" })
+            const mid = -Math.PI / 2 + i * SLOT
+            const icon = svgEl("g", { class: "rd-icon", transform: `translate(${C + RING_R * Math.cos(mid) - 10} ${C + RING_R * Math.sin(mid) - 10})` })
+            icon.innerHTML = p.icon
+            const title = svgEl("title")
+            title.textContent = p.label
+            g.append(path, icon, title)
+            svg.appendChild(g)
+            caps[p.id] = { path, icon, g }
+            g.addEventListener("pointerdown", (e) => onCapDown(e as PointerEvent, p.id, i))
         })
+        menu.appendChild(svg)
+        const tip = document.createElement("div")
+        tip.className = "rd-tip"
+        menu.appendChild(tip)
+
+        const color = buildColorView()
+        menu.appendChild(color.el)
+        color.onBack = () => menu!.classList.remove("color")
 
         refresh = () => {
-            const c = cornersOf(f)
-            // opacity goes into the background alpha so the handles stay fully visible
-            box.style.background = rgbaCss(f.fill, (f.alpha * opacityOf(f)) / 100)
-            box.style.borderRadius = c.map((r) => r * s + "px").join(" ")
-            c.forEach((r, i) => {
-                const rp = r * s
-                const left = i === 0 || i === 3,
-                    top = i === 0 || i === 1
-                // circle of radius r tucked into the corner; its center is where the handle sits
-                const set = (el: HTMLElement, size: number) => {
-                    el.style.left = left ? "" : "auto"
-                    el.style.top = top ? "" : "auto"
-                    el.style.right = left ? "auto" : "0"
-                    el.style.bottom = top ? "auto" : "0"
-                    if (left) el.style.left = "0"
-                    if (top) el.style.top = "0"
-                    el.style.width = el.style.height = size + "px"
-                }
-                set(circles[i], rp * 2)
-                circles[i].style.display = r > 0 ? "" : "none"
-                const hs = handles[i]
-                hs.style.left = hs.style.top = hs.style.right = hs.style.bottom = "auto"
-                if (left) hs.style.left = rp + "px"
-                else hs.style.right = rp + "px"
-                if (top) hs.style.top = rp + "px"
-                else hs.style.bottom = rp + "px"
-            })
-            q(".bm-opval").textContent = opacityOf(f) + "%"
-            q<HTMLElement>(".bm-slider-fill").style.width = opacityOf(f) + "%"
-            q<HTMLElement>(".bm-slider-thumb").style.left = opacityOf(f) + "%"
-            q<HTMLElement>(".bm-chip").style.background = rgbaCss(f.fill, f.alpha)
-            q(".bm-hex").textContent = f.fill.replace("#", "").toUpperCase()
-            q(".bm-alval").textContent = f.alpha + "%"
+            const tint = (id: Prop, hex: string, scale: number, i: number) => {
+                const c = caps[id]
+                c.path.style.stroke = hex
+                if (scale >= 0) c.path.setAttribute("d", capPath(i, scale))
+                c.icon.style.color = relativeLuminance(hexToRgb(hex)) > 0.55 ? "#1c1c1c" : "#fff"
+            }
+            // fill & stroke show their real color; the rest keep their own tones and grow with the value
+            const fillTone = rgbaCss(f.fill, 100)
+            tint("fill", f.fill, 1, 0)
+            caps.fill.path.style.stroke = fillTone
+            tint("strokeColor", strokeOf(f), 1, 1)
+            tint("strokeWidth", PROPS[2].tone, strokeWidthOf(f) / MAX_STROKE, 2)
+            tint("opacity", PROPS[3].tone, opacityOf(f) / 100, 3)
+            tint("radius", PROPS[4].tone, radiusOf(f) / maxRadius(f), 4)
         }
         refresh()
 
-        function onHandleDown(e: PointerEvent, corner: number) {
-            if (e.button !== 0) return
-            e.preventDefault()
-            e.stopPropagation()
-            const all = e.shiftKey
-            const start = cornersOf(f)
+        // the dark value pill (like the unit pill in the reference), just outside the capsule
+        function showTip(i: number, text: string) {
+            const mid = -Math.PI / 2 + i * SLOT
+            const r = RING_R + CAP_W / 2 + 14
+            tip.style.left = C + r * Math.cos(mid) + "px"
+            tip.style.top = C + r * Math.sin(mid) + "px"
+            tip.textContent = text
+            tip.classList.add("on")
+        }
+
+        function scrub(e: PointerEvent, id: Prop, i: number, get: () => number, set: (dx: number, start: number) => number | null, text: (v: number) => string) {
+            const start = get()
             const pre = ctx.store.snapshot()
             let moved = false
-            const max = maxRadius(f)
-            const sel = all ? circles : [circles[corner]]
-            sel.forEach((c) => c.classList.add("active"))
-            const left = corner === 0 || corner === 3,
-                top = corner === 0 || corner === 1
-            track(
+            caps[id].g.classList.add("active")
+            showTip(i, text(start))
+            drag(
                 e,
-                (ev) => {
-                    // inward distance from the grabbed corner, along the diagonal
-                    const b = box.getBoundingClientRect()
-                    const ix = left ? ev.clientX - b.left : b.right - ev.clientX
-                    const iy = top ? ev.clientY - b.top : b.bottom - ev.clientY
-                    const r = Math.max(0, Math.min(max, Math.round((ix + iy) / 2 / s)))
-                    const next = start.map((v, i) => (all || i === corner ? r : v)) as Corners
-                    readout.textContent = String(r)
-                    const cur = cornersOf(f)
-                    if (next.every((v, i) => v === cur[i])) return
+                (dx) => {
+                    const v = set(dx, start)
+                    if (v === null) return
                     if (!moved) {
                         moved = true
                         ctx.store.pushHistory(pre)
                     }
-                    f.radius = next.every((v) => v === next[0]) ? next[0] : next
                     f.updatedAt = Date.now()
+                    showTip(i, text(v))
                     refresh()
                     emit()
                 },
                 () => {
-                    sel.forEach((c) => c.classList.remove("active"))
-                    readout.textContent = ""
+                    caps[id].g.classList.remove("active")
+                    tip.classList.remove("on")
                 }
             )
         }
 
-        // opacity slider
-        slider.addEventListener("pointerdown", (e) => {
+        function onCapDown(e: PointerEvent, id: Prop, i: number) {
             if (e.button !== 0) return
             e.preventDefault()
             e.stopPropagation()
-            const pre = ctx.store.snapshot()
-            let moved = false
-            track(e, (ev) => {
-                const b = slider.getBoundingClientRect()
-                const v = Math.max(0, Math.min(100, Math.round(((ev.clientX - b.left) / b.width) * 100)))
-                if (v === opacityOf(f)) return
-                if (!moved) {
-                    moved = true
-                    ctx.store.pushHistory(pre)
-                }
-                f.opacity = v
-                f.updatedAt = Date.now()
-                refresh()
-                emit()
-            })
-        })
-
-        // fill: the round picker takes over the box
-        const color = buildColorView()
-        menu.appendChild(color.el)
-        q(".bm-fill").addEventListener("click", () => {
-            color.load(f)
-            menu!.classList.add("color")
-            clamp()
-        })
+            if (id === "fill") {
+                color.load(f.fill, f.alpha, true, {
+                    apply: (hex, a) => ctx.panel.fill.setFill(hex, a),
+                    begin: () => ctx.panel.fill.beginGesture(),
+                    end: () => ctx.panel.fill.endGesture(),
+                })
+                menu!.classList.add("color")
+                return
+            }
+            if (id === "strokeColor") {
+                let pre: ReturnType<typeof ctx.store.snapshot> | null = null
+                color.load(strokeOf(f), 100, false, {
+                    apply: (hex) => {
+                        if (hex === f.stroke) return
+                        if (pre) {
+                            ctx.store.pushHistory(pre)
+                            pre = null
+                        }
+                        f.stroke = hex
+                        if (!f.strokeWidth) f.strokeWidth = 1 // a color with no width would show nothing
+                        f.updatedAt = Date.now()
+                        emit()
+                    },
+                    begin: () => (pre = ctx.store.snapshot()),
+                    end: () => (pre = null),
+                })
+                menu!.classList.add("color")
+                return
+            }
+            if (id === "opacity")
+                scrub(e, id, i, () => opacityOf(f), (dx, s) => {
+                    const v = Math.max(0, Math.min(100, Math.round(s + dx / 2)))
+                    if (v === opacityOf(f)) return null
+                    f.opacity = v
+                    return v
+                }, (v) => v + "%")
+            else if (id === "strokeWidth")
+                scrub(e, id, i, () => strokeWidthOf(f), (dx, s) => {
+                    const v = Math.max(0, Math.min(MAX_STROKE, Math.round(s + dx / 6)))
+                    if (v === strokeWidthOf(f)) return null
+                    f.strokeWidth = v
+                    return v
+                }, (v) => v + " px")
+            else
+                scrub(e, id, i, () => radiusOf(f), (dx, s) => {
+                    const v = Math.max(0, Math.min(maxRadius(f), Math.round(s + dx / ctx.doc.view.z)))
+                    if (v === radiusOf(f) && typeof f.radius === "number") return null
+                    f.radius = v // all four corners together
+                    return v
+                }, (v) => v + " px")
+        }
 
         ctx.root.appendChild(menu)
-        // keep the whole menu on screen (it grows when the color picker is showing)
-        let px = x,
-            py = y
-        const clamp = () => {
-            const mb = menu!.getBoundingClientRect()
-            menu!.style.left = Math.max(8, Math.min(window.innerWidth - mb.width - 8, px)) + "px"
-            menu!.style.top = Math.max(8, Math.min(window.innerHeight - mb.height - 8, py)) + "px"
-        }
-        clamp()
-        color.onBack = () => {
-            menu!.classList.remove("color")
-            clamp()
-        }
         document.addEventListener("pointerdown", onOutside, true)
         document.addEventListener("keydown", onKey, true)
     }
 
     /* ---- the round color picker ---- */
     function buildColorView() {
+        // what the picker is currently editing: set by load()
+        const session = { apply: (_hex: string, _a: number) => {}, begin: () => {}, end: () => {}, hasAlpha: true }
         const el = document.createElement("div")
         el.className = "rd-color"
         el.innerHTML = `
@@ -318,13 +324,13 @@ export function installBoxMenu(ctx: EditorContext): BoxMenuAPI & Disposable {
         }
         /** write the current color to the frame, as one undo step per gesture */
         function commit() {
-            ctx.panel.fill.setFill(hex(), a)
-            if (target) refresh()
+            session.apply(hex(), a)
+            refresh()
         }
         function gesture(e: PointerEvent, apply: (ev: PointerEvent) => void) {
             e.preventDefault()
             e.stopPropagation()
-            ctx.panel.fill.beginGesture()
+            session.begin()
             const mv = (ev: PointerEvent) => {
                 apply(ev)
                 paint()
@@ -334,7 +340,7 @@ export function installBoxMenu(ctx: EditorContext): BoxMenuAPI & Disposable {
             const end = () => {
                 document.removeEventListener("pointermove", mv)
                 document.removeEventListener("pointerup", end)
-                ctx.panel.fill.endGesture()
+                session.end()
             }
             document.addEventListener("pointermove", mv)
             document.addEventListener("pointerup", end)
@@ -372,12 +378,14 @@ export function installBoxMenu(ctx: EditorContext): BoxMenuAPI & Disposable {
         const api = {
             el,
             onBack: () => {},
-            load(f: FrameItem) {
-                const [hh, ss, vv] = rgbToHsv(...hexToRgb(f.fill))
+            load(hex: string, alpha: number, hasAlpha: boolean, hooks: Pick<typeof session, "apply" | "begin" | "end">) {
+                Object.assign(session, hooks, { hasAlpha })
+                el.classList.toggle("no-alpha", !hasAlpha)
+                const [hh, ss, vv] = rgbToHsv(...hexToRgb(hex))
                 h = hh
                 s = ss
                 v = vv
-                a = f.alpha
+                a = alpha
                 paint()
             },
         }
