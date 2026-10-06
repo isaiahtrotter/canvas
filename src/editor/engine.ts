@@ -31,7 +31,7 @@ import { installCanvasPointer } from "./interactions/canvasPointer"
 import { installKeymap } from "./interactions/keymap"
 import { installPanel } from "./panel/panel"
 import { installSettings } from "./settings/settings"
-import { installRadial } from "./radial/radial"
+import { installBoxMenu } from "./boxmenu/boxmenu"
 import { seedDemoText, centerDefaultItems, seedDemoFrame } from "./demo"
 // the host-facing types keep their import path
 export type { FrameLayout, FrameItem, Fill, FillMode, EditorHooks, EditorAPI } from "./core/types"
@@ -68,7 +68,7 @@ export function mountEditor(root: HTMLElement, hooks: EditorHooks = {}): EditorA
     use("keymap", installKeymap(ctx)) // main keydown / keyup
     use("panel", installPanel(ctx)) // align row, position fields, fill row, layout section, Versions buttons
     use("settings", installSettings(ctx)) // theme, dialog, switches, resizers
-    use("radial", installRadial(ctx)) // canvas contextmenu
+    use("boxmenu", installBoxMenu(ctx)) // canvas contextmenu
 
     // 2. SUBSCRIBERS — the canvas first, then the panel, which measures what the canvas just wrote
     ctx.bus.subscribe(ctx.canvas.renderCanvas)

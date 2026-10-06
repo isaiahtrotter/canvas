@@ -1,47 +1,32 @@
-// Right-click a frame: a radial menu with three wedges.
-//   Fill     — swaps the menu for a round color picker (hue/saturation disc,
-//              with brightness and opacity arcs around it)
-//   Opacity  — press the wedge and drag sideways to scrub
-//   Radius   — four corner tiles, each scrubbed on its own (Shift, or the
-//              wedge behind the tiles, moves all four together)
-// One undo step per gesture. The menu stays up so several properties can be
-// adjusted in a row; Escape or a click outside closes it.
+// Right-click a frame: a box menu. A miniature of the frame sits on top with
+// a handle in each corner — drag one inward and a circle grows in the corner
+// to show the radius (Shift moves all four together). Below it: an opacity
+// slider, and a Fill row that swaps the box for a round color picker (hue /
+// saturation disc, with brightness and opacity arcs around it).
+// One undo step per gesture. Escape or a click outside closes it.
 import type { EditorContext, Disposable } from "../core/context"
 import { type FrameItem, isFrame } from "../core/types"
 import { hexToRgb, hsvToRgb, rgbToHex, rgbToHsv, rgbaCss } from "../color"
 
-export interface RadialAPI {
+export interface BoxMenuAPI {
     open(it: FrameItem, x: number, y: number): void
     close(): void
 }
 
-const SIZE = 272,
-    C = SIZE / 2,
-    R_IN = 46,
-    R_OUT = 130,
-    GAP = 0.04 // radians trimmed from each wedge edge
-const NS = "http://www.w3.org/2000/svg"
-const WEDGES = ["fill", "opacity", "radius"] as const
-type Wedge = (typeof WEDGES)[number]
-const LABEL: Record<Wedge, string> = { fill: "Fill", opacity: "Opacity", radius: "Radius" }
-const SCRUB_PX_PER_UNIT = 2 // screen px of horizontal drag per opacity point
-// radius tiles in display order (rows of two), as indices into [tl, tr, br, bl]
-const TILES = [0, 1, 3, 2]
-type Corners = [number, number, number, number]
+const W = 280, // menu width
+    SIZE = 272, // the color picker's square
+    C = SIZE / 2
+const PREVIEW_W = 240,
+    PREVIEW_H = 150
+type Corners = [number, number, number, number] // [tl, tr, br, bl]
+const CORNERS = ["tl", "tr", "br", "bl"] as const
 
 // color view geometry
 const DISC = 92 // hue/saturation disc radius
 const ARC_R = 116 // brightness / opacity arc radius
-const ARC_W = 14
 const ARC_SPAN = (75 * Math.PI) / 180 // each arc reaches this far above and below the horizontal
 
-const svgEl = <K extends keyof SVGElementTagNameMap>(tag: K, attrs: Record<string, string> = {}) => {
-    const el = document.createElementNS(NS, tag)
-    for (const k in attrs) el.setAttribute(k, attrs[k])
-    return el
-}
-
-export function installRadial(ctx: EditorContext): RadialAPI & Disposable {
+export function installBoxMenu(ctx: EditorContext): BoxMenuAPI & Disposable {
     const { canvas } = ctx.dom
     const selection = ctx.doc.selection
     const { emit } = ctx.bus
@@ -56,16 +41,6 @@ export function installRadial(ctx: EditorContext): RadialAPI & Disposable {
         return typeof r === "number" ? [r, r, r, r] : [...r]
     }
     const maxRadius = (f: FrameItem) => Math.floor(Math.min(f.w, f.h) / 2)
-
-    const pt = (r: number, a: number) => `${(C + r * Math.cos(a)).toFixed(2)} ${(C + r * Math.sin(a)).toFixed(2)}`
-    function wedgePath(a0: number, a1: number) {
-        // the angular gap shrinks with radius so the visible gap stays even
-        const i0 = a0 + GAP * (R_OUT / R_IN) * 0.5,
-            i1 = a1 - GAP * (R_OUT / R_IN) * 0.5
-        const o0 = a0 + GAP,
-            o1 = a1 - GAP
-        return `M ${pt(R_OUT, o0)} A ${R_OUT} ${R_OUT} 0 0 1 ${pt(R_OUT, o1)} L ${pt(R_IN, i1)} A ${R_IN} ${R_IN} 0 0 0 ${pt(R_IN, i0)} Z`
-    }
 
     function close() {
         if (!menu) return
@@ -84,11 +59,8 @@ export function installRadial(ctx: EditorContext): RadialAPI & Disposable {
         e.stopPropagation()
         close()
     }
-
-    /** run a drag: `move` gets the horizontal distance in screen px; `up` runs on release */
-    function drag(e: PointerEvent, move: (dx: number, ev: PointerEvent) => void, up?: () => void) {
-        const startX = e.clientX
-        const mv = (ev: PointerEvent) => move(ev.clientX - startX, ev)
+    function track(e: PointerEvent, move: (ev: PointerEvent) => void, up?: () => void) {
+        const mv = (ev: PointerEvent) => move(ev)
         const end = () => {
             document.removeEventListener("pointermove", mv)
             document.removeEventListener("pointerup", end)
@@ -96,174 +68,181 @@ export function installRadial(ctx: EditorContext): RadialAPI & Disposable {
         }
         document.addEventListener("pointermove", mv)
         document.addEventListener("pointerup", end)
+        move(e)
     }
 
     function open(it: FrameItem, x: number, y: number) {
         close()
         target = it
         menu = document.createElement("div")
-        menu.className = "radial"
-        const half = SIZE / 2
-        const cx = Math.max(half, Math.min(window.innerWidth - half, x))
-        const cy = Math.max(half, Math.min(window.innerHeight - half, y))
-        menu.style.left = cx - half + "px"
-        menu.style.top = cy - half + "px"
-        menu.style.width = menu.style.height = SIZE + "px"
+        menu.className = "bm"
+        menu.style.width = W + "px"
+        menu.innerHTML = `
+          <div class="bm-main">
+            <div class="bm-stage">
+              <div class="bm-checker"></div>
+              <div class="bm-box"></div>
+              <div class="bm-readout"></div>
+            </div>
+            <div class="bm-row"><span class="bm-key">Opacity</span>
+              <div class="bm-slider"><div class="bm-slider-fill"></div><div class="bm-slider-thumb"></div></div>
+              <span class="bm-val bm-opval"></span></div>
+            <button class="bm-row bm-fill" type="button"><span class="bm-key">Fill</span>
+              <span class="bm-chip"></span><span class="bm-hex"></span><span class="bm-val bm-alval"></span></button>
+          </div>`
+        const q = <T extends Element>(sel: string) => menu!.querySelector<T>(sel)!
+        const stage = q<HTMLElement>(".bm-stage")
+        const box = q<HTMLElement>(".bm-box")
+        const readout = q<HTMLElement>(".bm-readout")
+        const slider = q<HTMLElement>(".bm-slider")
+        const f = it
 
-        const svg = svgEl("svg", { viewBox: `0 0 ${SIZE} ${SIZE}`, class: "rd-wedges" })
-        const slice = (Math.PI * 2) / WEDGES.length
-        const els = {} as Record<Wedge, { g: SVGGElement; value?: SVGTextElement; swatch?: SVGCircleElement }>
-        let tileEls: Array<{ rect: SVGRectElement; text: SVGTextElement }> = []
-        WEDGES.forEach((w, i) => {
-            const a0 = -Math.PI / 2 - slice / 2 + i * slice
-            const a1 = a0 + slice
-            const g = svgEl("g", { class: "rd-wedge" })
-            g.dataset.wedge = w
-            g.appendChild(svgEl("path", { d: wedgePath(a0, a1) }))
-            const mid = (a0 + a1) / 2
-            const rm = (R_IN + R_OUT) / 2 + 2
-            const mx = C + rm * Math.cos(mid),
-                my = C + rm * Math.sin(mid)
-            const label = svgEl("text", { class: "rd-label", x: String(mx), y: String(my - (w === "radius" ? 27 : 5)) })
-            label.textContent = LABEL[w]
-            g.appendChild(label)
-            els[w] = { g }
-            if (w === "radius") {
-                const TW = 30,
-                    TH = 17
-                tileEls = []
-                TILES.forEach((corner, n) => {
-                    const col = n % 2,
-                        row = Math.floor(n / 2)
-                    const tx = mx - TW - 1 + col * (TW + 2),
-                        ty = my - 19 + row * (TH + 2)
-                    const tile = svgEl("g", { class: "rd-tile" })
-                    const rect = svgEl("rect", { x: String(tx), y: String(ty), width: String(TW), height: String(TH), rx: "3" })
-                    const text = svgEl("text", { class: "rd-tilevalue", x: String(tx + TW / 2), y: String(ty + TH / 2 + 4) })
-                    tile.append(rect, text)
-                    tile.addEventListener("pointerdown", (e) => onRadiusDown(e as PointerEvent, corner))
-                    g.appendChild(tile)
-                    tileEls[corner] = { rect, text }
-                })
-                g.addEventListener("pointerdown", (e) => onRadiusDown(e as PointerEvent, -1))
-            } else if (w === "opacity") {
-                const value = svgEl("text", { class: "rd-value", x: String(mx), y: String(my + 11) })
-                g.appendChild(value)
-                els[w].value = value
-                g.addEventListener("pointerdown", (e) => onOpacityDown(e as PointerEvent))
-            } else {
-                const swatch = svgEl("circle", { class: "rd-swatch", cx: String(mx), cy: String(my + 12), r: "10" })
-                g.appendChild(swatch)
-                els.fill.swatch = swatch
-                g.addEventListener("pointerdown", (e) => {
-                    if (e.button !== 0) return
-                    e.preventDefault()
-                    e.stopPropagation()
-                    showColor()
-                })
-            }
-            svg.appendChild(g)
+        // the miniature: scaled to fit, corner handles + circles drawn over it
+        const s = Math.min(PREVIEW_W / f.w, PREVIEW_H / f.h)
+        const pw = f.w * s,
+            ph = f.h * s
+        box.style.width = pw + "px"
+        box.style.height = ph + "px"
+        const circles: HTMLElement[] = [],
+            handles: HTMLElement[] = []
+        CORNERS.forEach((c, i) => {
+            const circle = document.createElement("div")
+            circle.className = "bm-circle"
+            const h = document.createElement("div")
+            h.className = "bm-handle"
+            h.style.cursor = i % 2 === 0 ? "nwse-resize" : "nesw-resize"
+            h.title = "Drag to round this corner (Shift: all corners)"
+            h.addEventListener("pointerdown", (e) => onHandleDown(e, i))
+            box.append(circle, h)
+            circles.push(circle)
+            handles.push(h)
         })
-        const hub = svgEl("text", { class: "rd-hub", x: String(C), y: String(C + 4) })
-        svg.appendChild(hub)
-        menu.appendChild(svg)
-
-        const color = buildColorView()
-        menu.appendChild(color.el)
 
         refresh = () => {
-            if (!target) return
-            els.opacity.value!.textContent = opacityOf(target) + "%"
-            const c = cornersOf(target)
-            tileEls.forEach((t, corner) => (t.text.textContent = String(Math.round(c[corner]))))
-            els.fill.swatch!.style.fill = rgbaCss(target.fill, target.alpha)
+            const c = cornersOf(f)
+            // opacity goes into the background alpha so the handles stay fully visible
+            box.style.background = rgbaCss(f.fill, (f.alpha * opacityOf(f)) / 100)
+            box.style.borderRadius = c.map((r) => r * s + "px").join(" ")
+            c.forEach((r, i) => {
+                const rp = r * s
+                const left = i === 0 || i === 3,
+                    top = i === 0 || i === 1
+                // circle of radius r tucked into the corner; its center is where the handle sits
+                const set = (el: HTMLElement, size: number) => {
+                    el.style.left = left ? "" : "auto"
+                    el.style.top = top ? "" : "auto"
+                    el.style.right = left ? "auto" : "0"
+                    el.style.bottom = top ? "auto" : "0"
+                    if (left) el.style.left = "0"
+                    if (top) el.style.top = "0"
+                    el.style.width = el.style.height = size + "px"
+                }
+                set(circles[i], rp * 2)
+                circles[i].style.display = r > 0 ? "" : "none"
+                const hs = handles[i]
+                hs.style.left = hs.style.top = hs.style.right = hs.style.bottom = "auto"
+                if (left) hs.style.left = rp + "px"
+                else hs.style.right = rp + "px"
+                if (top) hs.style.top = rp + "px"
+                else hs.style.bottom = rp + "px"
+            })
+            q(".bm-opval").textContent = opacityOf(f) + "%"
+            q<HTMLElement>(".bm-slider-fill").style.width = opacityOf(f) + "%"
+            q<HTMLElement>(".bm-slider-thumb").style.left = opacityOf(f) + "%"
+            q<HTMLElement>(".bm-chip").style.background = rgbaCss(f.fill, f.alpha)
+            q(".bm-hex").textContent = f.fill.replace("#", "").toUpperCase()
+            q(".bm-alval").textContent = f.alpha + "%"
         }
         refresh()
-        ctx.root.appendChild(menu)
-        document.addEventListener("pointerdown", onOutside, true)
-        document.addEventListener("keydown", onKey, true)
 
-        function showColor() {
-            color.load(target!)
-            menu!.classList.add("color")
-        }
-
-        function flash(text: string) {
-            hub.textContent = text
-        }
-
-        function onOpacityDown(e: PointerEvent) {
-            if (e.button !== 0 || !target) return
+        function onHandleDown(e: PointerEvent, corner: number) {
+            if (e.button !== 0) return
             e.preventDefault()
             e.stopPropagation()
-            const f = target
-            const start = opacityOf(f)
-            const pre = ctx.store.snapshot()
-            let moved = false
-            els.opacity.g.classList.add("active")
-            drag(
-                e,
-                (dx) => {
-                    const v = Math.max(0, Math.min(100, Math.round(start + dx / SCRUB_PX_PER_UNIT)))
-                    if (v === opacityOf(f)) return
-                    if (!moved) {
-                        moved = true
-                        ctx.store.pushHistory(pre)
-                    }
-                    f.opacity = v
-                    f.updatedAt = Date.now()
-                    flash(v + "%")
-                    refresh()
-                    emit()
-                },
-                () => {
-                    els.opacity.g.classList.remove("active")
-                    flash("")
-                }
-            )
-        }
-
-        /** corner -1 = all four (each keeps its own offset from the others) */
-        function onRadiusDown(e: PointerEvent, corner: number) {
-            if (e.button !== 0 || !target) return
-            e.preventDefault()
-            e.stopPropagation()
-            const f = target
-            const all = corner < 0 || e.shiftKey
+            const all = e.shiftKey
             const start = cornersOf(f)
             const pre = ctx.store.snapshot()
             let moved = false
-            const hot = all ? tileEls.map((t) => t.rect) : [tileEls[corner].rect]
-            hot.forEach((r) => r.classList.add("active"))
-            els.radius.g.classList.add("active")
             const max = maxRadius(f)
-            drag(
+            const sel = all ? circles : [circles[corner]]
+            sel.forEach((c) => c.classList.add("active"))
+            const left = corner === 0 || corner === 3,
+                top = corner === 0 || corner === 1
+            track(
                 e,
-                (dx) => {
-                    const d = dx / ctx.doc.view.z
-                    const next = start.map((s, i) =>
-                        all || i === corner ? Math.max(0, Math.min(max, Math.round(s + d))) : s
-                    ) as Corners
+                (ev) => {
+                    // inward distance from the grabbed corner, along the diagonal
+                    const b = box.getBoundingClientRect()
+                    const ix = left ? ev.clientX - b.left : b.right - ev.clientX
+                    const iy = top ? ev.clientY - b.top : b.bottom - ev.clientY
+                    const r = Math.max(0, Math.min(max, Math.round((ix + iy) / 2 / s)))
+                    const next = start.map((v, i) => (all || i === corner ? r : v)) as Corners
+                    readout.textContent = String(r)
                     const cur = cornersOf(f)
                     if (next.every((v, i) => v === cur[i])) return
                     if (!moved) {
                         moved = true
                         ctx.store.pushHistory(pre)
                     }
-                    // stored as one number again while all four agree
                     f.radius = next.every((v) => v === next[0]) ? next[0] : next
                     f.updatedAt = Date.now()
-                    flash(String(all ? next[0] : next[corner]))
                     refresh()
                     emit()
                 },
                 () => {
-                    hot.forEach((r) => r.classList.remove("active"))
-                    els.radius.g.classList.remove("active")
-                    flash("")
+                    sel.forEach((c) => c.classList.remove("active"))
+                    readout.textContent = ""
                 }
             )
         }
+
+        // opacity slider
+        slider.addEventListener("pointerdown", (e) => {
+            if (e.button !== 0) return
+            e.preventDefault()
+            e.stopPropagation()
+            const pre = ctx.store.snapshot()
+            let moved = false
+            track(e, (ev) => {
+                const b = slider.getBoundingClientRect()
+                const v = Math.max(0, Math.min(100, Math.round(((ev.clientX - b.left) / b.width) * 100)))
+                if (v === opacityOf(f)) return
+                if (!moved) {
+                    moved = true
+                    ctx.store.pushHistory(pre)
+                }
+                f.opacity = v
+                f.updatedAt = Date.now()
+                refresh()
+                emit()
+            })
+        })
+
+        // fill: the round picker takes over the box
+        const color = buildColorView()
+        menu.appendChild(color.el)
+        q(".bm-fill").addEventListener("click", () => {
+            color.load(f)
+            menu!.classList.add("color")
+            clamp()
+        })
+
+        ctx.root.appendChild(menu)
+        // keep the whole menu on screen (it grows when the color picker is showing)
+        let px = x,
+            py = y
+        const clamp = () => {
+            const mb = menu!.getBoundingClientRect()
+            menu!.style.left = Math.max(8, Math.min(window.innerWidth - mb.width - 8, px)) + "px"
+            menu!.style.top = Math.max(8, Math.min(window.innerHeight - mb.height - 8, py)) + "px"
+        }
+        clamp()
+        color.onBack = () => {
+            menu!.classList.remove("color")
+            clamp()
+        }
+        document.addEventListener("pointerdown", onOutside, true)
+        document.addEventListener("keydown", onKey, true)
     }
 
     /* ---- the round color picker ---- */
@@ -388,10 +367,11 @@ export function installRadial(ctx: EditorContext): RadialAPI & Disposable {
         thumbV.addEventListener("pointerdown", arcDrag(-1, setV) as EventListener)
         el.querySelectorAll('[data-arc="alpha"]').forEach((p) => p.addEventListener("pointerdown", arcDrag(1, setA) as EventListener))
         thumbA.addEventListener("pointerdown", arcDrag(1, setA) as EventListener)
-        $(".rd-back").addEventListener("click", () => menu?.classList.remove("color"))
+        $(".rd-back").addEventListener("click", () => api.onBack())
 
-        return {
+        const api = {
             el,
+            onBack: () => {},
             load(f: FrameItem) {
                 const [hh, ss, vv] = rgbToHsv(...hexToRgb(f.fill))
                 h = hh
@@ -401,6 +381,7 @@ export function installRadial(ctx: EditorContext): RadialAPI & Disposable {
                 paint()
             },
         }
+        return api
     }
 
     // right-click a frame (its body, or its name label) to open the menu
