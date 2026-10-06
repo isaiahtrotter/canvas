@@ -47,6 +47,8 @@ export interface FrameItem {
     fill: string // hex
     alpha: number // 0–100
     layout?: FrameLayout | null
+    opacity?: number // 0–100 of the frame itself; default 100
+    radius?: number // corner radius, world units; default 0
     /** id of the frame this frame sits in, or null. Set the same way as a
      *  text's: by where the pointer is when a drag ends, or by the frame drawn
      *  around it — not by geometry, so a child frame can hang past its

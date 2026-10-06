@@ -1,0 +1,18 @@
+/* The right-click radial menu for frames. */
+.radial{
+  position:fixed;z-index:60;user-select:none;-webkit-user-select:none;
+  font-family:'Inter',system-ui,sans-serif;
+  filter:drop-shadow(0 6px 18px rgba(0,0,0,.18));
+  animation:radial-in .12s ease-out;
+}
+@keyframes radial-in{from{opacity:0;transform:scale(.9)}to{opacity:1;transform:none}}
+.radial svg{width:100%;height:100%;display:block;overflow:visible;}
+.rd-wedge{cursor:ew-resize;}
+.rd-wedge[data-wedge="fill"]{cursor:pointer;}
+.rd-wedge path{fill:var(--surface);stroke:var(--line);stroke-width:1;transition:fill .08s;}
+.rd-wedge:hover path{fill:var(--surface-2);}
+.rd-wedge.active path{fill:var(--surface-3);}
+.rd-label{font-size:11px;font-weight:500;fill:var(--text-2);text-anchor:middle;pointer-events:none;}
+.rd-value{font-size:12px;font-weight:600;fill:var(--text);text-anchor:middle;pointer-events:none;font-variant-numeric:tabular-nums;}
+.rd-swatch{stroke:var(--line);stroke-width:1;pointer-events:none;}
+.rd-hub{font-size:13px;font-weight:600;fill:var(--text);text-anchor:middle;pointer-events:none;font-variant-numeric:tabular-nums;}
