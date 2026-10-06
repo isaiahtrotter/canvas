@@ -205,7 +205,7 @@ export function installCanvas(ctx: EditorContext): CanvasAPI & Disposable {
         setStyle(el, "height", it.h + "px")
         setStyle(el, "background", rgbaCss(it.fill, it.alpha))
         setStyle(el, "opacity", String((it.opacity ?? 100) / 100))
-        setStyle(el, "border-radius", (it.radius ?? 0) + "px")
+        setStyle(el, "border-radius", [].concat(it.radius ?? 0).map((r) => r + "px").join(" "))
     }
     function renderCanvas() {
         const multi = selection.size > 1
